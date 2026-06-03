@@ -74,6 +74,32 @@ class MapGenerator:
             raise
 
     @staticmethod
+    def _track_elevation(row: dict) -> float:
+        """Pick a track elevation value for KML/GPX.
+
+        Prefer an explicit ``elevation`` column when present (e.g. the boat's
+        altitude above sea level). Otherwise fall back to negative depth so the
+        track sits on the seafloor in 3D viewers. Returns 0.0 when neither is
+        available.
+        """
+        for key in ('elevation', 'altitude_m', 'altitude'):
+            value = row.get(key)
+            if value in (None, ''):
+                continue
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                continue
+
+        depth = row.get('depth_m')
+        if depth not in (None, ''):
+            try:
+                return -float(depth)
+            except (ValueError, TypeError):
+                pass
+        return 0.0
+
+    @staticmethod
     def create_kml(csv_file: Path, output_file: Optional[Path] = None) -> Path:
         """Convert CSV to KML format."""
         if output_file is None:
@@ -95,6 +121,7 @@ class MapGenerator:
       <name>Track</name>
       <styleUrl>#lineStyle</styleUrl>
       <LineString>
+        <altitudeMode>absolute</altitudeMode>
         <coordinates>
 '''
 
@@ -104,9 +131,9 @@ class MapGenerator:
                     try:
                         lat = float(row.get('latitude', '') or 0)
                         lon = float(row.get('longitude', '') or 0)
-                        elev = float(row.get('elevation', '') or 0)
                         if lat == 0 and lon == 0:
                             continue
+                        elev = MapGenerator._track_elevation(row)
                         kml_content += f"          {lon},{lat},{elev}\n"
                     except (ValueError, TypeError):
                         continue
@@ -152,13 +179,24 @@ class MapGenerator:
                     try:
                         lat = float(row.get('latitude', '') or 0)
                         lon = float(row.get('longitude', '') or 0)
-                        elev = float(row.get('elevation', '') or 0)
                         if lat == 0 and lon == 0:
                             continue
-                        gpx_content += f'''      <trkpt lat="{lat}" lon="{lon}">
-        <ele>{elev}</ele>
-      </trkpt>
-'''
+                        elev = MapGenerator._track_elevation(row)
+                        depth_raw = row.get('depth_m')
+                        try:
+                            depth_val = float(depth_raw) if depth_raw not in (None, '') else None
+                        except (ValueError, TypeError):
+                            depth_val = None
+
+                        gpx_content += f'      <trkpt lat="{lat}" lon="{lon}">\n'
+                        gpx_content += f'        <ele>{elev}</ele>\n'
+                        if depth_val is not None:
+                            gpx_content += (
+                                '        <extensions>\n'
+                                f'          <depth>{depth_val}</depth>\n'
+                                '        </extensions>\n'
+                            )
+                        gpx_content += '      </trkpt>\n'
                     except (ValueError, TypeError):
                         continue
 
@@ -181,10 +219,6 @@ class MapGenerator:
         if output_file is None:
             output_file = csv_file.with_name(f"{csv_file.stem}_3d.ply")
 
-        points = []
-        origin_lat = None
-        origin_lon = None
-
         def parse_float(value: Optional[str]) -> Optional[float]:
             try:
                 if value is None or value == '':
@@ -193,6 +227,15 @@ class MapGenerator:
             except (ValueError, TypeError):
                 return None
 
+        # First pass: collect valid rows and compute centroid for a stable
+        # local ENU origin. Using the first row as the origin makes the
+        # projection sensitive to GPS warm-up outliers; the centroid keeps
+        # all coordinates well-conditioned regardless of where the track
+        # starts.
+        valid_rows = []
+        lat_sum = 0.0
+        lon_sum = 0.0
+
         with open(csv_file, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
@@ -200,32 +243,36 @@ class MapGenerator:
                 lon = parse_float(row.get('longitude'))
                 if lat is None or lon is None:
                     continue
-                if origin_lat is None or origin_lon is None:
-                    origin_lat = lat
-                    origin_lon = lon
-
                 depth = parse_float(row.get('depth_m'))
                 elevation = parse_float(row.get('elevation'))
                 if depth is None and elevation is None:
                     continue
+                valid_rows.append((lat, lon, depth, elevation, row))
+                lat_sum += lat
+                lon_sum += lon
 
-                x, y = MapGenerator._wgs84_to_local_xy(lat, lon, origin_lat, origin_lon)
-                z = -depth if depth is not None else elevation
-
-                points.append({
-                    'x': x,
-                    'y': y,
-                    'z': z,
-                    'intensity_avg': parse_float(row.get('sonar_intensity_avg')) or 0.0,
-                    'intensity_max': parse_float(row.get('sonar_intensity_max')) or 0.0,
-                    'water_temp_c': parse_float(row.get('water_temp_c')) or 0.0,
-                    'sonar_frequency_khz': parse_float(row.get('sonar_frequency_khz')) or 0.0,
-                    'beam_count': int(parse_float(row.get('beam_count')) or 0),
-                    'frame_number': int(parse_float(row.get('frame_number')) or 0),
-                })
-
-        if not points:
+        if not valid_rows:
             raise ValueError('No valid sonar point data found in CSV for 3D export')
+
+        origin_lat = lat_sum / len(valid_rows)
+        origin_lon = lon_sum / len(valid_rows)
+
+        points = []
+        for lat, lon, depth, elevation, row in valid_rows:
+            x, y = MapGenerator._wgs84_to_local_xy(lat, lon, origin_lat, origin_lon)
+            z = -depth if depth is not None else elevation
+
+            points.append({
+                'x': x,
+                'y': y,
+                'z': z,
+                'intensity_avg': parse_float(row.get('sonar_intensity_avg')) or 0.0,
+                'intensity_max': parse_float(row.get('sonar_intensity_max')) or 0.0,
+                'water_temp_c': parse_float(row.get('water_temp_c')) or 0.0,
+                'sonar_frequency_khz': parse_float(row.get('sonar_frequency_khz')) or 0.0,
+                'beam_count': int(parse_float(row.get('beam_count')) or 0),
+                'frame_number': int(parse_float(row.get('frame_number')) or 0),
+            })
 
         header = [
             'ply',
