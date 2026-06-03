@@ -233,6 +233,23 @@ def get_upload(upload_id: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+def get_upload_by_job_id(job_id: str) -> Optional[Dict[str, Any]]:
+    """Return the most recent upload record for a background job id."""
+    init_db()
+    with _db_lock:
+        conn = _connect()
+        row = conn.execute(
+            '''
+            SELECT * FROM uploads
+            WHERE job_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            ''',
+            (job_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def save_labels(upload_id: str, labels: List[Dict[str, Any]]) -> int:
     init_db()
     now = time.time()
