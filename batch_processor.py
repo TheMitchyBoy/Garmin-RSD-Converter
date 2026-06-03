@@ -201,6 +201,11 @@ def batch_analyze_csv(
             continue
 
         label = _location_label(input_file, location)
+        header_error = validate_sonar_csv(input_file)
+        if header_error:
+            result.message = header_error
+            summary.results.append(result)
+            continue
         try:
             if out_root:
                 out_root.mkdir(parents=True, exist_ok=True)
@@ -296,6 +301,31 @@ def batch_process_uploads(
     if len(summaries) == 1:
         return summaries[0]
     return merge_batch_summaries(*summaries)
+
+
+
+def validate_sonar_csv(csv_file: Path) -> Optional[str]:
+    """Return an error message when CSV is not a supported sonar export."""
+    import csv as csv_module
+
+    try:
+        with open(csv_file, newline='', encoding='utf-8', errors='replace') as handle:
+            reader = csv_module.DictReader(handle)
+            if not reader.fieldnames:
+                return 'CSV has no header row.'
+            fields = {name.strip().lower() for name in reader.fieldnames if name}
+            if 'latitude' not in fields or 'longitude' not in fields:
+                return (
+                    'CSV must include latitude and longitude columns '
+                    '(use a PINGVerter/Garmin sonar export CSV).'
+                )
+            if not any(reader):
+                return 'CSV has no data rows.'
+    except OSError as exc:
+        return f'Could not read CSV: {exc}'
+    except csv_module.Error as exc:
+        return f'Invalid CSV format: {exc}'
+    return None
 
 
 def batch_convert(

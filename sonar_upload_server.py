@@ -28,7 +28,7 @@ from batch_processor import batch_process_uploads, format_batch_summary
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB per request
-APP_BUILD_ID = '2026.06.03-fix-click'
+APP_BUILD_ID = '2026.06.03-csv-upload'
 # Hosted (Railway) web uploads: stream to disk; avoid loading huge bodies in RAM.
 WEB_UPLOAD_MAX_BYTES = 150 * 1024 * 1024  # 150 MB per request on public UI
 READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
@@ -177,8 +177,7 @@ def _parse_request_form_data_streaming(
     raw_path = uploads_root / f'raw-{uuid.uuid4().hex}.multipart'
     try:
         _read_request_body_to_file(rfile, content_length, raw_path)
-        body = raw_path.read_bytes()
-        return _parse_multipart_form_data(boundary, body, uploads_root)
+        return _parse_multipart_from_path(boundary, raw_path, uploads_root)
     finally:
         raw_path.unlink(missing_ok=True)
 
@@ -287,12 +286,12 @@ def _upload_page_html(port: int) -> str:
 <body>
   <div class="wrap">
     <h1>Garmin Sonar Survey Upload</h1>
-    <p class="lead">Upload <code>.RSD</code> recordings to convert, or <code>.CSV</code> survey files to analyze (maps, heatmaps, fish, dashboard). Hosted uploads are limited to 150&nbsp;MB per request.</p>
+    <p class="lead">Upload <code>.RSD</code> recordings to convert, or <code>.CSV</code> survey files to analyze (maps, heatmaps, fish, dashboard). Hosted uploads are limited to 150&nbsp;MB per request. Large CSV files may take several minutes to upload on slow connections.</p>
 
     <label class="dropzone" id="dropzone" for="fileInput">
       <p><strong>Click or drag files here</strong></p>
       <p>Supports Garmin <code>.RSD</code> and project <code>.CSV</code> files</p>
-      <input type="file" id="fileInput" accept=".rsd,.RSD,.csv,.CSV" multiple>
+      <input type="file" id="fileInput" accept=".rsd,.RSD,.csv,.CSV,text/csv,application/octet-stream" multiple>
       <div class="file-list" id="fileList"></div>
     </label>
 
@@ -324,7 +323,7 @@ def _upload_page_html(port: int) -> str:
 
     <button type="button" id="submitBtn" disabled>Upload and process</button>
     <div id="status"></div>
-    <p class="deploy-version" style="margin-top:1.5rem;font-size:0.75rem;color:var(--muted);">Build: 2026.06.03-rsd-csv · accepts .RSD + .CSV</p>
+    <p class="deploy-version" style="margin-top:1.5rem;font-size:0.75rem;color:var(--muted);">Build: 2026.06.03-csv-upload · accepts .RSD + .CSV</p>
   </div>
   <script>
     const dropzone = document.getElementById('dropzone');
@@ -425,6 +424,41 @@ def _upload_page_html(port: int) -> str:
       statusEl.innerHTML = html;
     }}
 
+    function uploadFormData(form) {{
+      return new Promise((resolve, reject) => {{
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/process');
+        xhr.timeout = 900000;
+        xhr.upload.onprogress = (evt) => {{
+          if (evt.lengthComputable) {{
+            const pct = Math.round((evt.loaded / evt.total) * 100);
+            statusEl.textContent = 'Uploading… ' + pct + '% ('
+              + (evt.loaded / 1024 / 1024).toFixed(1) + ' / '
+              + (evt.total / 1024 / 1024).toFixed(1) + ' MB)';
+          }} else {{
+            statusEl.textContent = 'Uploading… ' + (evt.loaded / 1024 / 1024).toFixed(1) + ' MB sent';
+          }}
+        }};
+        xhr.onload = () => {{
+          const text = xhr.responseText || '';
+          let data;
+          try {{
+            data = JSON.parse(text);
+          }} catch {{
+            reject(new Error('Server returned non-JSON (' + xhr.status + '): ' + text.slice(0, 200)));
+            return;
+          }}
+          resolve({{
+            res: {{ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status }},
+            data,
+          }});
+        }};
+        xhr.onerror = () => reject(new Error(networkErrorHint('Upload failed')));
+        xhr.ontimeout = () => reject(new Error(networkErrorHint('Upload timed out after 15 minutes')));
+        xhr.send(form);
+      }});
+    }}
+
     function sleep(ms) {{
       return new Promise(resolve => setTimeout(resolve, ms));
     }}
@@ -442,7 +476,7 @@ def _upload_page_html(port: int) -> str:
       form.append('nchunk', document.getElementById('nchunk').value);
 
       try {{
-        const {{ res, data }} = await fetchJson('/api/process', {{ method: 'POST', body: form }});
+        const {{ res, data }} = await uploadFormData(form);
         if (!res.ok) throw new Error(data.error || 'Upload failed');
 
         const jobId = data.job_id;
