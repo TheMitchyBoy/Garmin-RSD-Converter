@@ -10,8 +10,6 @@ from pathlib import Path
 from typing import Optional, Tuple
 import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -229,7 +227,9 @@ def convert_sonar_rsd_to_csv(input_file: Path, output_file: Optional[Path] = Non
 
 if __name__ == '__main__':
     import sys
-    
+
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
     if len(sys.argv) < 2:
         print("Usage: python sonar_converter_streaming.py <input_rsd_file> [output_csv_file] [stride]")
         sys.exit(1)

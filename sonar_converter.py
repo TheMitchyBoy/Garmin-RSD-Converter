@@ -12,8 +12,6 @@ from dataclasses import dataclass
 import logging
 from datetime import datetime
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -381,14 +379,16 @@ def convert_sonar_rsd_to_csv(input_file: Path, output_file: Optional[Path] = Non
 
 if __name__ == '__main__':
     import sys
-    
+
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
     if len(sys.argv) < 2:
         print("Usage: python sonar_converter.py <input_rsd_file> [output_csv_file]")
         sys.exit(1)
-    
+
     input_file = sys.argv[1]
     output_file = sys.argv[2] if len(sys.argv) > 2 else None
-    
+
     try:
         result = convert_sonar_rsd_to_csv(input_file, output_file)
         print(f"✓ Conversion successful: {result}")
