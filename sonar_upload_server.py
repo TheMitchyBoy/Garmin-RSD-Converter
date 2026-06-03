@@ -28,7 +28,7 @@ from batch_processor import batch_process_uploads, format_batch_summary
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB per request
-APP_BUILD_ID = '2026.06.03-upload-fix'
+APP_BUILD_ID = '2026.06.03-upload-progress'
 # Hosted (Railway) web uploads: stream to disk; avoid loading huge bodies in RAM.
 WEB_UPLOAD_MAX_BYTES = 150 * 1024 * 1024  # 150 MB per request on public UI
 READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
@@ -335,7 +335,7 @@ def _upload_page_html(port: int) -> str:
 
     <button type="button" id="submitBtn" disabled>Upload and process</button>
     <div id="status"></div>
-    <p class="deploy-version" style="margin-top:1.5rem;font-size:0.75rem;color:var(--muted);">Build: 2026.06.03-upload-fix · accepts .RSD + .CSV</p>
+    <p class="deploy-version" style="margin-top:1.5rem;font-size:0.75rem;color:var(--muted);">Build: 2026.06.03-upload-progress · accepts .RSD + .CSV</p>
   </div>
   <script>
     const dropzone = document.getElementById('dropzone');
@@ -441,24 +441,30 @@ def _upload_page_html(port: int) -> str:
         const xhr = new XMLHttpRequest();
         const started = Date.now();
         let lastLoaded = 0;
-        const tick = setInterval(() => {{
+        let lastTotal = 0;
+        let lengthComputable = false;
+
+        function renderUploadProgress() {{
           const secs = Math.round((Date.now() - started) / 1000);
           const loadedMb = (lastLoaded / 1024 / 1024).toFixed(1);
-          statusEl.textContent = 'Uploading… ' + loadedMb + ' MB sent (' + secs + 's)';
-        }}, 1000);
+          if (lengthComputable && lastTotal > 0) {{
+            const pct = Math.max(1, Math.round((lastLoaded / lastTotal) * 100));
+            const totalMb = (lastTotal / 1024 / 1024).toFixed(1);
+            statusEl.textContent = 'Uploading… ' + pct + '% (' + loadedMb + ' / ' + totalMb + ' MB) · ' + secs + 's';
+          }} else {{
+            statusEl.textContent = 'Uploading… ' + loadedMb + ' MB · ' + secs + 's';
+          }}
+        }}
+
+        const tick = setInterval(renderUploadProgress, 1000);
         const stopTick = () => clearInterval(tick);
         xhr.open('POST', '/api/process');
         xhr.timeout = 900000;
         xhr.upload.onprogress = (evt) => {{
           lastLoaded = evt.loaded;
-          if (evt.lengthComputable) {{
-            const pct = Math.max(1, Math.round((evt.loaded / evt.total) * 100));
-            statusEl.textContent = 'Uploading… ' + pct + '% ('
-              + (evt.loaded / 1024 / 1024).toFixed(1) + ' / '
-              + (evt.total / 1024 / 1024).toFixed(1) + ' MB)';
-          }} else {{
-            statusEl.textContent = 'Uploading… ' + (lastLoaded / 1024 / 1024).toFixed(1) + ' MB sent';
-          }}
+          lastTotal = evt.total || 0;
+          lengthComputable = evt.lengthComputable;
+          renderUploadProgress();
         }};
         xhr.onload = () => {{
           stopTick();
