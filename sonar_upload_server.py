@@ -26,12 +26,19 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from area_map import build_area_map_geojson, load_echogram_segment
 from batch_processor import batch_process_uploads, format_batch_summary
-from survey_database import get_db_path, init_db, list_uploads, record_completed_upload, save_labels
+from survey_database import (
+    get_db_path,
+    get_upload_by_job_id,
+    init_db,
+    list_uploads,
+    record_completed_upload,
+    save_labels,
+)
 
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB per request
-APP_BUILD_ID = '2026.06.03-db-fix'
+APP_BUILD_ID = '2026.06.03-job-recovery'
 # Hosted (Railway) web uploads: stream to disk; avoid loading huge bodies in RAM.
 WEB_UPLOAD_MAX_BYTES = 150 * 1024 * 1024  # 150 MB per request on public UI
 READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
@@ -146,9 +153,81 @@ def _summary_to_payload(summary, session_dir: Path) -> Dict[str, Any]:
 def _prune_old_jobs(jobs: Dict[str, ProcessingJob]) -> None:
     if len(jobs) <= MAX_RETAINED_JOBS:
         return
-    ordered = sorted(jobs.values(), key=lambda job: job.created_at)
-    for job in ordered[: len(jobs) - MAX_RETAINED_JOBS]:
+    # Never evict active jobs; only prune completed/failed entries.
+    terminal = sorted(
+        (job for job in jobs.values() if job.status in (JobStatus.COMPLETED, JobStatus.FAILED)),
+        key=lambda job: job.created_at,
+    )
+    prune_count = max(0, len(jobs) - MAX_RETAINED_JOBS)
+    for job in terminal[:prune_count]:
         jobs.pop(job.id, None)
+
+
+def _artifact_from_upload_record(
+    upload: Dict[str, Any],
+    session_id: str,
+    field_name: str,
+    *,
+    artifact_type: str,
+    label: str,
+) -> Optional[Dict[str, str]]:
+    stored = upload.get(field_name)
+    if not stored:
+        return None
+    stored_path = Path(str(stored))
+    parts = list(stored_path.parts)
+    if parts and parts[0] == session_id:
+        rel = Path(*parts[1:]).as_posix()
+    else:
+        rel = stored_path.name
+    return {
+        'type': artifact_type,
+        'label': label,
+        'path': rel,
+        'url': f'/results/{session_id}/{quote(rel, safe="/")}',
+    }
+
+
+def _completed_job_payload_from_upload(upload: Dict[str, Any], output_root: Path) -> Dict[str, Any]:
+    """Reconstruct a minimal completed payload when in-memory job state is unavailable."""
+    session_id = str(upload.get('id') or '')
+    survey_name = str(upload.get('survey_name') or session_id or 'survey')
+    artifacts: List[Dict[str, str]] = []
+    for spec in (
+        ('dashboard_path', 'dashboard', 'Analytics dashboard'),
+        ('csv_path', 'csv', 'Sonar CSV'),
+        ('fish_geojson_path', 'geojson', 'Fish detections (GeoJSON)'),
+        ('depth_geojson_path', 'geojson', 'Depth layer (GeoJSON)'),
+    ):
+        artifact = _artifact_from_upload_record(
+            upload,
+            session_id,
+            spec[0],
+            artifact_type=spec[1],
+            label=spec[2],
+        )
+        if artifact:
+            artifacts.append(artifact)
+
+    payload: Dict[str, Any] = {
+        'total': 1,
+        'succeeded': 1,
+        'failed': 0,
+        'session_id': session_id,
+        'output_dir': str((output_root / session_id).resolve()),
+        'results': [{
+            'name': survey_name,
+            'success': True,
+            'message': 'Recovered from persisted job record.',
+            'csv': None,
+            'artifacts': artifacts,
+        }],
+        'area_map_url': '/area-map',
+    }
+    dashboard = next((a for a in artifacts if a['type'] == 'dashboard'), None)
+    if dashboard:
+        payload['dashboard_url'] = dashboard['url']
+    return payload
 
 
 def _run_processing_job(
@@ -414,7 +493,18 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
             with self.jobs_lock:
                 job = self.jobs.get(job_id)
             if not job:
-                self._send_json({'error': 'Job not found'}, HTTPStatus.NOT_FOUND)
+                persisted = get_upload_by_job_id(job_id)
+                if not persisted:
+                    self._send_json({'error': 'Job not found'}, HTTPStatus.NOT_FOUND)
+                    return
+                fallback = _completed_job_payload_from_upload(persisted, self.output_root)
+                self._send_json({
+                    'job_id': job_id,
+                    'status': JobStatus.COMPLETED.value,
+                    'file_count': max(1, int(persisted.get('row_count') or 1)),
+                    'result': fallback,
+                    'recovered': True,
+                })
                 return
             body: Dict[str, Any] = {
                 'job_id': job.id,

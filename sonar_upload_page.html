@@ -415,8 +415,17 @@
             showStatus('Retrying status check (' + pollErrors + '/15)…', null);
             continue;
           }
+          if (!statusRes.ok) {
+            const notFound = statusRes.status === 404 && statusData && statusData.error === 'Job not found';
+            if (notFound) {
+              pollErrors += 1;
+              if (pollErrors >= 30) throw new Error('Job not found');
+              showStatus('Reconnecting to job status (' + pollErrors + '/30)…', null);
+              continue;
+            }
+            throw new Error(statusData.error || 'Status error');
+          }
           pollErrors = 0;
-          if (!statusRes.ok) throw new Error(statusData.error || 'Status error');
           if (statusData.status === 'pending' || statusData.status === 'running') {
             showStatus('Analyzing ' + (statusData.file_count || selectedFiles.length) + ' file(s)…', null);
             continue;
