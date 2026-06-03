@@ -80,12 +80,25 @@ class TestMapGenerator(unittest.TestCase):
             self.assertEqual(data['type'], 'FeatureCollection')
             self.assertGreaterEqual(len(data['features']), 1)
 
+        depth_data = json.loads(depth_file.read_text(encoding='utf-8'))
+        depth_props = depth_data['features'][0]['properties']
+        self.assertIn('depth_band', depth_props)
+        self.assertEqual(depth_props['marker-color'], depth_props['color'])
+        self.assertEqual(depth_props['fill'], depth_props['color'])
+        self.assertEqual(depth_props['stroke'], '#08306b')
+
     def test_fish_health_and_dashboard_exports(self):
         csv_file = self._write_full_sonar_csv()
 
         detections_file, detections = FishDetector.detect_fish(csv_file)
         self.assertTrue(detections_file.exists())
         self.assertGreaterEqual(len(detections), 1)
+        detections_data = json.loads(detections_file.read_text(encoding='utf-8'))
+        detection_props = detections_data['features'][0]['properties']
+        self.assertIn('marker-color', detection_props)
+        self.assertIn('marker-size', detection_props)
+        self.assertIn('marker-symbol', detection_props)
+        self.assertEqual(detection_props['marker-color'], detection_props['color'])
 
         metrics = PopulationHealthAnalytics.analyze_population_metrics(detections_file)
         self.assertIn('health_indicators', metrics)
@@ -97,7 +110,10 @@ class TestMapGenerator(unittest.TestCase):
             output_file=self.temp_path / 'dashboard.html',
         )
         self.assertTrue(dashboard_file.exists())
-        self.assertIn('Sonar Analysis Dashboard', dashboard_file.read_text(encoding='utf-8'))
+        dashboard_html = dashboard_file.read_text(encoding='utf-8')
+        self.assertIn('Sonar Analysis Dashboard', dashboard_html)
+        self.assertIn('Map legend', dashboard_html)
+        self.assertIn('Confidence halo', dashboard_html)
 
     def test_empty_heatmaps_do_not_crash(self):
         csv_file = self.temp_path / 'empty.csv'

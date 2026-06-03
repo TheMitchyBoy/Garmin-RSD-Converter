@@ -52,6 +52,29 @@ class FishDetector:
     # Depth ranges where fish are commonly found (in meters)
     MIN_FISH_DEPTH = 2
     MAX_FISH_DEPTH = 500
+
+    SIZE_STYLES = {
+        'small': {
+            'color': '#22c55e',
+            'marker_size': 'small',
+            'marker_symbol': 'circle',
+        },
+        'medium': {
+            'color': '#f59e0b',
+            'marker_size': 'medium',
+            'marker_symbol': 'circle',
+        },
+        'large': {
+            'color': '#ef4444',
+            'marker_size': 'large',
+            'marker_symbol': 'circle',
+        },
+        'school': {
+            'color': '#7c3aed',
+            'marker_size': 'large',
+            'marker_symbol': 'star',
+        },
+    }
     
     @staticmethod
     def detect_fish(
@@ -119,7 +142,8 @@ class FishDetector:
             # Export detections as GeoJSON
             features = []
             for detection in detections:
-                color = FishDetector._get_size_color(detection.size_category)
+                style = FishDetector._get_size_style(detection.size_category)
+                color = style['color']
                 
                 feature = {
                     'type': 'Feature',
@@ -134,6 +158,13 @@ class FishDetector:
                         'size': detection.size_category,
                         'frame': detection.frame_number,
                         'color': color,
+                        'marker-color': color,
+                        'marker-size': style['marker_size'],
+                        'marker-symbol': style['marker_symbol'],
+                        'fill': color,
+                        'fill-opacity': round(0.45 + detection.confidence * 0.45, 2),
+                        'stroke': '#0f172a',
+                        'stroke-width': 1.5,
                     }
                 }
                 features.append(feature)
@@ -198,13 +229,16 @@ class FishDetector:
     @staticmethod
     def _get_size_color(size: str) -> str:
         """Get color for fish size category"""
-        colors = {
-            'small': '#FFA500',    # Orange
-            'medium': '#FF6347',   # Tomato
-            'large': '#DC143C',    # Crimson
-            'school': '#8B0000',   # Dark Red
-        }
-        return colors.get(size, '#808080')  # Gray as default
+        return FishDetector._get_size_style(size)['color']
+
+    @staticmethod
+    def _get_size_style(size: str) -> Dict[str, str]:
+        """Get map styling for fish size category."""
+        return FishDetector.SIZE_STYLES.get(size, {
+            'color': '#64748b',
+            'marker_size': 'medium',
+            'marker_symbol': 'circle',
+        })
     
     @staticmethod
     def aggregate_fish_by_location(

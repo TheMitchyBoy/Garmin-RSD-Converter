@@ -64,15 +64,20 @@ class GridCell:
 
 class HeatmapGenerator:
     """Generate heatmaps from sonar CSV data"""
+
+    DEPTH_PALETTE = (
+        (0.00, (214, 244, 255)),  # shallow shoals
+        (0.22, (74, 201, 227)),
+        (0.48, (30, 136, 229)),
+        (0.72, (25, 83, 165)),
+        (1.00, (8, 36, 86)),      # deepest water
+    )
     
     @staticmethod
     def _get_color_hex(value: float, min_val: float, max_val: float) -> str:
         """Get hex color for a value using a blue-green-red gradient"""
         # Normalize value to 0-1
-        if max_val == min_val:
-            normalized = 0.5
-        else:
-            normalized = (value - min_val) / (max_val - min_val)
+        normalized = HeatmapGenerator._normalize(value, min_val, max_val)
         
         # Blue (0) -> Green -> Yellow -> Red (1)
         if normalized < 0.33:
@@ -92,6 +97,49 @@ class HeatmapGenerator:
             b = 0
         
         return f"#{r:02x}{g:02x}{b:02x}"
+
+    @staticmethod
+    def _normalize(value: float, min_val: float, max_val: float) -> float:
+        """Normalize a value into the 0-1 range."""
+        if max_val == min_val:
+            return 0.5
+        return max(0.0, min(1.0, (value - min_val) / (max_val - min_val)))
+
+    @staticmethod
+    def _interpolate_color(start: Tuple[int, int, int], end: Tuple[int, int, int], ratio: float) -> str:
+        """Interpolate between two RGB colors and return a hex color."""
+        ratio = max(0.0, min(1.0, ratio))
+        r = round(start[0] + (end[0] - start[0]) * ratio)
+        g = round(start[1] + (end[1] - start[1]) * ratio)
+        b = round(start[2] + (end[2] - start[2]) * ratio)
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    @staticmethod
+    def _get_depth_color_hex(depth: float, min_depth: float, max_depth: float) -> str:
+        """Get bathymetry color where lighter cyan is shallow and navy is deep."""
+        normalized = HeatmapGenerator._normalize(depth, min_depth, max_depth)
+        palette = HeatmapGenerator.DEPTH_PALETTE
+
+        for index in range(len(palette) - 1):
+            start_pos, start_color = palette[index]
+            end_pos, end_color = palette[index + 1]
+            if normalized <= end_pos:
+                segment_ratio = (normalized - start_pos) / (end_pos - start_pos)
+                return HeatmapGenerator._interpolate_color(start_color, end_color, segment_ratio)
+
+        return HeatmapGenerator._interpolate_color(palette[-1][1], palette[-1][1], 0)
+
+    @staticmethod
+    def _get_depth_band(depth: float, min_depth: float, max_depth: float) -> str:
+        """Classify depth into a small set of map legend bands."""
+        normalized = HeatmapGenerator._normalize(depth, min_depth, max_depth)
+        if normalized < 0.25:
+            return 'shallow'
+        if normalized < 0.60:
+            return 'mid-depth'
+        if normalized < 0.85:
+            return 'deep'
+        return 'deepest'
     
     @staticmethod
     def create_intensity_heatmap(
@@ -245,8 +293,17 @@ class HeatmapGenerator:
                 
                 for feature in features:
                     depth = feature['properties']['depth_m']
-                    color = HeatmapGenerator._get_color_hex(depth, min_depth, max_depth)
-                    feature['properties']['color'] = color
+                    color = HeatmapGenerator._get_depth_color_hex(depth, min_depth, max_depth)
+                    feature['properties'].update({
+                        'color': color,
+                        'fill': color,
+                        'marker-color': color,
+                        'marker-size': 'small',
+                        'fill-opacity': 0.82,
+                        'stroke': '#08306b',
+                        'stroke-width': 1,
+                        'depth_band': HeatmapGenerator._get_depth_band(depth, min_depth, max_depth),
+                    })
             
             geojson = {'type': 'FeatureCollection', 'features': features}
             

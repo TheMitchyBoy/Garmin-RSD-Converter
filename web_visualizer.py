@@ -13,6 +13,14 @@ from typing import Any, Dict, List, Optional
 class WebVisualizer:
     """Create offline HTML dashboards from detection GeoJSON and health metrics."""
 
+    FISH_STYLES = {
+        "small": {"color": "#22c55e", "radius": 5.0, "label": "Small"},
+        "medium": {"color": "#f59e0b", "radius": 6.5, "label": "Medium"},
+        "large": {"color": "#ef4444", "radius": 8.0, "label": "Large"},
+        "school": {"color": "#7c3aed", "radius": 10.0, "label": "School"},
+        "unknown": {"color": "#64748b", "radius": 6.0, "label": "Unknown"},
+    }
+
     @staticmethod
     def create_dashboard(
         detections_file: Path,
@@ -86,7 +94,8 @@ class WebVisualizer:
     .value {{ font-size: 28px; font-weight: 700; margin-top: 6px; }}
     h2 {{ margin-top: 0; }}
     .map-wrap {{ overflow: auto; }}
-    svg {{ width: 100%; min-height: 420px; border-radius: 10px; background: #eff6ff; }}
+    .map-note {{ margin-bottom: 14px; }}
+    svg {{ width: 100%; min-height: 460px; border-radius: 12px; background: #e0f2fe; }}
     table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
     th, td {{ padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; }}
     th {{ color: var(--muted); font-weight: 700; }}
@@ -110,7 +119,7 @@ class WebVisualizer:
 
     <section class="card">
       <h2>Detection Map</h2>
-      <p class="muted">Point positions are scaled from the detection latitude/longitude bounds.</p>
+      <p class="muted map-note">Point positions are scaled from the detection latitude/longitude bounds. Color shows fish size class and halo size shows confidence.</p>
       <div class="map-wrap">{svg}</div>
     </section>
 
@@ -182,14 +191,16 @@ class WebVisualizer:
     @staticmethod
     def _build_svg(points: List[Dict[str, Any]]) -> str:
         width = 960
-        height = 420
-        padding = 32
+        height = 460
+        padding = 54
 
         if not points:
             return (
                 f'<svg viewBox="0 0 {width} {height}" role="img" '
                 'aria-label="No fish detections found">'
-                f'<rect width="{width}" height="{height}" fill="#eff6ff"/>'
+                f'<rect width="{width}" height="{height}" fill="#e0f2fe"/>'
+                f'<rect x="{padding}" y="{padding}" width="{width - padding * 2}" '
+                f'height="{height - padding * 2}" rx="18" fill="#f8fafc" stroke="#bae6fd"/>'
                 f'<text x="{width / 2}" y="{height / 2}" text-anchor="middle" '
                 'fill="#64748b" font-size="20">No fish detections found</text>'
                 '</svg>'
@@ -202,29 +213,130 @@ class WebVisualizer:
         lat_span = max(max_lat - min_lat, 0.000001)
         lon_span = max(max_lon - min_lon, 0.000001)
 
+        plot_width = width - padding * 2
+        plot_height = height - padding * 2
+
+        grid_lines = []
+        for step in range(1, 4):
+            x = padding + (plot_width * step / 4)
+            y = padding + (plot_height * step / 4)
+            grid_lines.append(
+                f'<line x1="{x:.1f}" y1="{padding}" x2="{x:.1f}" y2="{height - padding}" '
+                'stroke="#cbd5e1" stroke-dasharray="4 6" stroke-opacity="0.75"/>'
+            )
+            grid_lines.append(
+                f'<line x1="{padding}" y1="{y:.1f}" x2="{width - padding}" y2="{y:.1f}" '
+                'stroke="#cbd5e1" stroke-dasharray="4 6" stroke-opacity="0.75"/>'
+            )
+
         circles = []
-        for point in points:
+        sorted_points = sorted(points, key=lambda item: WebVisualizer._safe_float(item.get("confidence")) or 0.0)
+        for point in sorted_points:
             x = padding + ((point["lon"] - min_lon) / lon_span) * (width - padding * 2)
             y = height - padding - ((point["lat"] - min_lat) / lat_span) * (height - padding * 2)
-            radius = 5 + min(float(point.get("confidence") or 0), 1.0) * 8
+            size = str(point.get("size", "unknown")).lower()
+            style = WebVisualizer.FISH_STYLES.get(size, WebVisualizer.FISH_STYLES["unknown"])
+            confidence = min(WebVisualizer._safe_float(point.get("confidence")) or 0.0, 1.0)
+            radius = style["radius"] + confidence * 5
+            halo_radius = radius + 7 + confidence * 7
             label = html.escape(
-                f"{point.get('size', 'unknown')} fish, depth {point.get('depth', 'n/a')}m"
+                f"{point.get('size', 'unknown')} fish, depth {point.get('depth', 'n/a')}m, "
+                f"confidence {confidence:.2f}, intensity {point.get('intensity', 'n/a')}"
             )
-            color = html.escape(str(point.get("color") or "#2563eb"))
+            color = html.escape(str(point.get("color") or style["color"]))
             circles.append(
+                f'<g class="detection detection-{html.escape(size)}">'
+                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{halo_radius:.1f}" '
+                f'fill="{color}" fill-opacity="{0.10 + confidence * 0.18:.2f}"/>'
                 f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{radius:.1f}" '
-                f'fill="{color}" fill-opacity="0.78"><title>{label}</title></circle>'
+                f'fill="{color}" fill-opacity="0.9" stroke="#ffffff" stroke-width="2.2">'
+                f'<title>{label}</title></circle>'
+                '</g>'
             )
 
         return (
             f'<svg viewBox="0 0 {width} {height}" role="img" '
             'aria-label="Fish detection map">'
-            f'<rect width="{width}" height="{height}" fill="#eff6ff"/>'
+            '<defs>'
+            '<linearGradient id="waterGradient" x1="0" x2="1" y1="0" y2="1">'
+            '<stop offset="0%" stop-color="#f0f9ff"/>'
+            '<stop offset="58%" stop-color="#bae6fd"/>'
+            '<stop offset="100%" stop-color="#0f4c81"/>'
+            '</linearGradient>'
+            '</defs>'
+            f'<rect width="{width}" height="{height}" fill="#e0f2fe"/>'
             f'<rect x="{padding}" y="{padding}" width="{width - padding * 2}" '
-            f'height="{height - padding * 2}" fill="none" stroke="#bfdbfe"/>'
+            f'height="{height - padding * 2}" rx="18" fill="url(#waterGradient)" stroke="#075985" '
+            'stroke-opacity="0.36"/>'
+            + "".join(grid_lines)
+            + WebVisualizer._svg_bounds_labels(
+                min_lat, max_lat, min_lon, max_lon, width, height, padding
+            )
             + "".join(circles)
+            + WebVisualizer._svg_map_legend(width, height)
             + '</svg>'
         )
+
+    @staticmethod
+    def _svg_bounds_labels(
+        min_lat: float,
+        max_lat: float,
+        min_lon: float,
+        max_lon: float,
+        width: int,
+        height: int,
+        padding: int,
+    ) -> str:
+        """Build subtle coordinate labels and a north marker for the SVG map."""
+        labels = [
+            f'<text x="{padding}" y="{padding - 16}" fill="#0f172a" font-size="13" font-weight="700">N</text>',
+            f'<text x="{padding}" y="{height - 18}" fill="#475569" font-size="12">SW {min_lat:.5f}, {min_lon:.5f}</text>',
+            f'<text x="{width - padding}" y="{padding - 16}" fill="#475569" font-size="12" text-anchor="end">NE {max_lat:.5f}, {max_lon:.5f}</text>',
+            f'<line x1="{padding + 6}" y1="{padding - 12}" x2="{padding + 6}" y2="{padding - 34}" stroke="#0f172a" stroke-width="2"/>',
+            f'<path d="M {padding + 6} {padding - 40} L {padding} {padding - 28} L {padding + 12} {padding - 28} Z" fill="#0f172a"/>',
+        ]
+        return "".join(labels)
+
+    @staticmethod
+    def _svg_map_legend(width: int, height: int) -> str:
+        """Build an embedded fish size and confidence legend."""
+        legend_x = width - 190
+        legend_y = height - 184
+        rows = []
+        for offset, key in enumerate(("small", "medium", "large", "school")):
+            style = WebVisualizer.FISH_STYLES[key]
+            y = legend_y + 46 + offset * 24
+            rows.append(
+                f'<circle cx="{legend_x + 18}" cy="{y}" r="{style["radius"]:.1f}" '
+                f'fill="{style["color"]}" fill-opacity="0.9" stroke="#ffffff" stroke-width="1.8"/>'
+                f'<text x="{legend_x + 38}" y="{y + 4}" fill="#0f172a" font-size="12">'
+                f'{style["label"]}</text>'
+            )
+
+        return (
+            f'<g class="map-legend" aria-label="Map legend">'
+            f'<rect x="{legend_x}" y="{legend_y}" width="158" height="154" rx="14" '
+            'fill="#ffffff" fill-opacity="0.88" stroke="#cbd5e1"/>'
+            f'<text x="{legend_x + 14}" y="{legend_y + 24}" fill="#0f172a" '
+            'font-size="13" font-weight="700">Map legend</text>'
+            + "".join(rows)
+            f'<circle cx="{legend_x + 18}" cy="{legend_y + 140}" r="13" '
+            'fill="#0ea5e9" fill-opacity="0.18"/>'
+            f'<circle cx="{legend_x + 18}" cy="{legend_y + 140}" r="5" '
+            'fill="#0ea5e9" fill-opacity="0.9"/>'
+            f'<text x="{legend_x + 38}" y="{legend_y + 144}" fill="#0f172a" '
+            'font-size="12">Confidence halo</text>'
+            '</g>'
+        )
+
+    @staticmethod
+    def _safe_float(value: Any) -> Optional[float]:
+        if value is None or value == "":
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _build_detection_rows(features: List[Dict[str, Any]]) -> str:

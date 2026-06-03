@@ -88,8 +88,10 @@ python sonar_cli.py heatmap sonar_data.csv --intensity --grid-size 0.01
 
 #### Depth Heatmap
 Visualizes seafloor elevation.
-- Blue = shallow water
-- Red = deep water
+- Light cyan = shallow shoals
+- Medium blue = mid-depth contours
+- Dark navy = deepest water
+- GeoJSON properties include map styling (`marker-color`, `fill`, `stroke`, `depth_band`) for common web map viewers
 
 ```bash
 python sonar_cli.py heatmap sonar_data.csv --depth
@@ -211,12 +213,13 @@ Create an interactive, beautiful HTML dashboard for sharing fishing health data.
 
 **Colors & Styling:**
 - Fish size indicated by point color:
-  - 🟠 Orange = Small fish
-  - 🔴 Tomato = Medium fish
-  - 🔴 Crimson = Large fish
-  - 🔴 Dark red = Schools
+  - Green = Small fish
+  - Amber = Medium fish
+  - Red = Large fish
+  - Purple = Schools
 
-- Point size indicates confidence level
+- Point size and halo indicate confidence level
+- Fish detection GeoJSON includes map styling (`marker-color`, `marker-size`, `marker-symbol`, `fill`, `stroke`) for direct upload to web mapping tools
 - Health scores color-coded: Green (Excellent), Blue (Good), Yellow (Fair), Red (Poor)
 
 **Command:**
