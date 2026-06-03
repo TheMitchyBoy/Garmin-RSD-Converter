@@ -25,6 +25,7 @@ from web_visualizer import WebVisualizer
 logger = logging.getLogger(__name__)
 
 RSD_SUFFIXES = {'.rsd', '.RSD'}
+CSV_SUFFIXES = {'.csv', '.CSV'}
 
 
 @dataclass
@@ -60,6 +61,10 @@ class BatchSummary:
 
 def is_rsd_file(path: Path) -> bool:
     return path.is_file() and path.suffix in RSD_SUFFIXES
+
+
+def is_csv_file(path: Path) -> bool:
+    return path.is_file() and path.suffix in CSV_SUFFIXES
 
 
 def discover_rsd_files(
@@ -118,6 +123,179 @@ def _location_label(input_file: Path, location: Optional[str]) -> str:
     if location:
         return location
     return input_file.stem.replace('_', ' ').replace('-', ' ')
+
+
+
+def _count_csv_rows(csv_file: Path) -> int:
+    import csv as csv_module
+
+    with open(csv_file, newline='', encoding='utf-8', errors='replace') as handle:
+        return sum(1 for _ in csv_module.DictReader(handle))
+
+
+def run_csv_analysis_pipeline(
+    csv_file: Path,
+    *,
+    location: Optional[str] = None,
+    full_pipeline: bool = True,
+    map_formats: Optional[Sequence[str]] = None,
+) -> List[Path]:
+    """Run map / heatmap / fish analysis on an existing project CSV."""
+    label = _location_label(csv_file, location)
+    outputs: List[Path] = [csv_file]
+
+    if full_pipeline:
+        outputs.extend([
+            MapGenerator.create_ply(csv_file),
+            MapGenerator.create_geojson(csv_file),
+            MapGenerator.create_kml(csv_file),
+            MapGenerator.create_gpx(csv_file),
+        ])
+        intensity_hm = HeatmapGenerator.create_intensity_heatmap(csv_file)
+        depth_hm = HeatmapGenerator.create_depth_heatmap(csv_file, grid_size=0.01)
+        temperature_hm = HeatmapGenerator.create_temperature_heatmap(csv_file, grid_size=0.01)
+        outputs.extend([intensity_hm, depth_hm, temperature_hm])
+
+        detections_file, detections = FishDetector.detect_fish(csv_file)
+        outputs.append(detections_file)
+
+        metrics = PopulationHealthAnalytics.analyze_population_metrics(detections_file)
+        outputs.append(
+            PopulationHealthAnalytics.generate_public_report(metrics, location_name=label)
+        )
+        outputs.append(
+            WebVisualizer.create_dashboard(
+                detections_file,
+                metrics,
+                location_name=label,
+                depth_geojson_file=depth_hm,
+            )
+        )
+    elif map_formats:
+        outputs.extend(generate_map_exports(csv_file, map_formats))
+
+    return outputs
+
+
+def batch_analyze_csv(
+    sources: Sequence[Union[str, Path]],
+    *,
+    output_dir: Optional[Union[str, Path]] = None,
+    location: Optional[str] = None,
+    full_pipeline: bool = True,
+    map_formats: Optional[Sequence[str]] = None,
+    continue_on_error: bool = True,
+) -> BatchSummary:
+    """Analyze existing sonar CSV files (maps, heatmaps, fish, dashboard)."""
+    import shutil
+
+    summary = BatchSummary()
+    out_root = Path(output_dir).expanduser() if output_dir else None
+
+    for raw in sources:
+        input_file = Path(raw).expanduser()
+        result = FileJobResult(input_path=input_file, success=False)
+        if not is_csv_file(input_file):
+            result.message = 'Not a CSV file'
+            summary.results.append(result)
+            continue
+
+        label = _location_label(input_file, location)
+        try:
+            if out_root:
+                out_root.mkdir(parents=True, exist_ok=True)
+                csv_file = out_root / input_file.name
+                shutil.copy2(input_file, csv_file)
+            else:
+                csv_file = input_file
+
+            result.csv_path = csv_file
+            frame_count = _count_csv_rows(csv_file)
+            result.frame_count = frame_count
+            result.outputs.extend(
+                run_csv_analysis_pipeline(
+                    csv_file,
+                    location=label,
+                    full_pipeline=full_pipeline,
+                    map_formats=map_formats,
+                )
+            )
+
+            if full_pipeline:
+                result.message = f'Analysis complete: {frame_count:,} rows'
+            elif map_formats:
+                result.message = f'Generated map exports ({frame_count:,} rows)'
+            else:
+                result.message = f'CSV ready ({frame_count:,} rows)'
+
+            result.success = True
+        except Exception as exc:
+            result.message = str(exc)
+            logger.error('Failed to analyze %s: %s', input_file, exc)
+            if not continue_on_error:
+                summary.results.append(result)
+                raise
+        summary.results.append(result)
+
+    return summary
+
+
+def merge_batch_summaries(*summaries: BatchSummary) -> BatchSummary:
+    merged = BatchSummary()
+    for summary in summaries:
+        merged.results.extend(summary.results)
+    return merged
+
+
+def batch_process_uploads(
+    rsd_paths: Sequence[Path],
+    csv_paths: Sequence[Path],
+    *,
+    output_dir: Union[str, Path],
+    workflow: str = 'convert',
+    nchunk: int = 500,
+    map_formats: Optional[Sequence[str]] = None,
+    location: Optional[str] = None,
+) -> BatchSummary:
+    """Process a mixed upload of RSD and/or CSV files for the web UI."""
+    summaries: List[BatchSummary] = []
+
+    if rsd_paths:
+        if workflow == 'pipeline':
+            summaries.append(
+                batch_pipeline(
+                    rsd_paths,
+                    output_dir=output_dir,
+                    nchunk=nchunk,
+                    location=location,
+                )
+            )
+        else:
+            summaries.append(
+                batch_convert(
+                    rsd_paths,
+                    output_dir=output_dir,
+                    nchunk=nchunk,
+                    map_formats=map_formats,
+                )
+            )
+
+    if csv_paths:
+        summaries.append(
+            batch_analyze_csv(
+                csv_paths,
+                output_dir=output_dir,
+                location=location,
+                full_pipeline=(workflow == 'pipeline'),
+                map_formats=map_formats if workflow != 'pipeline' else None,
+            )
+        )
+
+    if not summaries:
+        return BatchSummary()
+    if len(summaries) == 1:
+        return summaries[0]
+    return merge_batch_summaries(*summaries)
 
 
 def batch_convert(
@@ -199,42 +377,26 @@ def batch_pipeline(
             )
             result.csv_path = csv_file
             result.frame_count = frame_count
-            result.outputs.append(csv_file)
-
-            for path in (
-                MapGenerator.create_ply(csv_file),
-                MapGenerator.create_geojson(csv_file),
-                MapGenerator.create_kml(csv_file),
-                MapGenerator.create_gpx(csv_file),
-            ):
-                result.outputs.append(path)
-
-            intensity_hm = HeatmapGenerator.create_intensity_heatmap(csv_file)
-            depth_hm = HeatmapGenerator.create_depth_heatmap(csv_file, grid_size=0.01)
-            temperature_hm = HeatmapGenerator.create_temperature_heatmap(
-                csv_file, grid_size=0.01,
+            pipeline_outputs = run_csv_analysis_pipeline(
+                csv_file, location=label, full_pipeline=True,
             )
-            result.outputs.extend([intensity_hm, depth_hm, temperature_hm])
+            result.outputs.extend(pipeline_outputs)
 
-            detections_file, detections = FishDetector.detect_fish(csv_file)
-            result.outputs.append(detections_file)
-
-            metrics = PopulationHealthAnalytics.analyze_population_metrics(detections_file)
-            report_file = PopulationHealthAnalytics.generate_public_report(
-                metrics, location_name=label,
+            detections_file = next(
+                (path for path in pipeline_outputs if path.name.endswith('_fish_detections.geojson')),
+                None,
             )
-            dashboard_file = WebVisualizer.create_dashboard(
-                detections_file,
-                metrics,
-                location_name=label,
-                depth_geojson_file=depth_hm,
-            )
-            result.outputs.extend([report_file, dashboard_file])
+            detection_count = 0
+            if detections_file and detections_file.exists():
+                import json
+                with open(detections_file, encoding='utf-8') as handle:
+                    payload = json.load(handle)
+                detection_count = len(payload.get('features', []))
 
             result.success = True
             result.message = (
                 f'Pipeline complete: {frame_count:,} frames, '
-                f'{len(detections):,} fish detections'
+                f'{detection_count:,} fish detections'
             )
         except Exception as exc:
             result.message = str(exc)

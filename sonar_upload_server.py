@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from batch_processor import batch_convert, batch_pipeline, format_batch_summary
+from batch_processor import batch_process_uploads, format_batch_summary
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,8 @@ def _prune_old_jobs(jobs: Dict[str, ProcessingJob]) -> None:
 
 def _run_processing_job(
     job_id: str,
-    saved_paths: List[Path],
+    rsd_paths: List[Path],
+    csv_paths: List[Path],
     session_dir: Path,
     workflow: str,
     nchunk: int,
@@ -97,20 +98,15 @@ def _run_processing_job(
             job.status = JobStatus.RUNNING
 
     try:
-        if workflow == 'pipeline':
-            summary = batch_pipeline(
-                saved_paths,
-                output_dir=session_dir,
-                nchunk=nchunk,
-                location=location,
-            )
-        else:
-            summary = batch_convert(
-                saved_paths,
-                output_dir=session_dir,
-                nchunk=nchunk,
-                map_formats=map_formats,
-            )
+        summary = batch_process_uploads(
+            rsd_paths,
+            csv_paths,
+            output_dir=session_dir,
+            workflow=workflow,
+            nchunk=nchunk,
+            map_formats=map_formats,
+            location=location,
+        )
         payload = _summary_to_payload(summary, session_dir)
         logger.info(format_batch_summary(summary))
         with jobs_lock:
@@ -187,13 +183,26 @@ def _parse_request_form_data_streaming(
 
 
 
+
+def _split_upload_paths(paths: List[Path]) -> Tuple[List[Path], List[Path]]:
+    rsd_paths: List[Path] = []
+    csv_paths: List[Path] = []
+    for item in paths:
+        suffix = item.suffix.lower()
+        if suffix == '.rsd':
+            rsd_paths.append(item)
+        elif suffix == '.csv':
+            csv_paths.append(item)
+    return rsd_paths, csv_paths
+
+
 def _upload_page_html(port: int) -> str:
     return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Garmin Sonar RSD Upload</title>
+  <title>Garmin Sonar Survey Upload</title>
   <style>
     :root {{
       --bg: #0f172a;
@@ -275,13 +284,13 @@ def _upload_page_html(port: int) -> str:
 </head>
 <body>
   <div class="wrap">
-    <h1>Garmin Sonar RSD Upload</h1>
-    <p class="lead">Drop one or many <code>.RSD</code> files to convert or run the full analysis pipeline. Hosted uploads are limited to 150&nbsp;MB per request; larger surveys should use the CLI.</p>
+    <h1>Garmin Sonar Survey Upload</h1>
+    <p class="lead">Upload <code>.RSD</code> recordings to convert, or <code>.CSV</code> survey files to analyze (maps, heatmaps, fish, dashboard). Hosted uploads are limited to 150&nbsp;MB per request.</p>
 
     <div class="dropzone" id="dropzone">
       <p><strong>Click or drag files here</strong></p>
-      <p>Supports multiple Garmin Sonar RSD recordings</p>
-      <input type="file" id="fileInput" accept=".rsd,.RSD" multiple>
+      <p>Supports Garmin <code>.RSD</code> and project <code>.CSV</code> files</p>
+      <input type="file" id="fileInput" accept=".rsd,.RSD,.csv,.CSV" multiple>
       <div class="file-list" id="fileList"></div>
     </div>
 
@@ -289,12 +298,12 @@ def _upload_page_html(port: int) -> str:
       <label>
         Workflow
         <select id="workflow">
-          <option value="convert">Convert to CSV (+ optional maps)</option>
-          <option value="pipeline">Full pipeline (maps, heatmaps, fish, dashboard)</option>
+          <option value="convert">RSD: convert to CSV (+ maps) · CSV: map exports</option>
+          <option value="pipeline">Full analysis (RSD convert + CSV analyze)</option>
         </select>
       </label>
       <label>
-        Map exports (convert only)
+        Map exports (RSD convert / CSV analyze)
         <select id="maps">
           <option value="">CSV only</option>
           <option value="all">All map formats (PLY, GeoJSON, KML, GPX)</option>
@@ -321,6 +330,7 @@ def _upload_page_html(port: int) -> str:
     const submitBtn = document.getElementById('submitBtn');
     const statusEl = document.getElementById('status');
     let selectedFiles = [];
+    const WEB_UPLOAD_MAX_MB = 150;
 
     function refreshFileList() {{
       submitBtn.disabled = selectedFiles.length === 0;
@@ -335,10 +345,10 @@ def _upload_page_html(port: int) -> str:
 
     function addFiles(fileListLike) {{
       const incoming = Array.from(fileListLike).filter(f =>
-        /\\.rsd$/i.test(f.name)
+        /\.(rsd|csv)$/i.test(f.name)
       );
       if (!incoming.length) {{
-        statusEl.textContent = 'Please select .RSD files only.';
+        statusEl.textContent = 'Please select .RSD or .CSV files only.';
         return;
       }}
       const names = new Set(selectedFiles.map(f => f.name));
@@ -369,8 +379,6 @@ def _upload_page_html(port: int) -> str:
       }});
     }});
     dropzone.addEventListener('drop', e => addFiles(e.dataTransfer.files));
-
-    const WEB_UPLOAD_MAX_MB = 150;
 
     function networkErrorHint(context) {{
       return context + ': connection lost (timeout, upload too large, or server restarted). '
@@ -581,8 +589,10 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
             nchunk = 500
 
         if not saved_paths:
-            self._send_json({'error': 'No .RSD files uploaded'}, HTTPStatus.BAD_REQUEST)
+            self._send_json({'error': 'No .RSD or .CSV files uploaded'}, HTTPStatus.BAD_REQUEST)
             return
+
+        rsd_paths, csv_paths = _split_upload_paths(saved_paths)
 
         session_dir = self.output_root / uuid.uuid4().hex[:12]
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -605,7 +615,8 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
             daemon=True,
             kwargs={
                 'job_id': job_id,
-                'saved_paths': list(saved_paths),
+                'rsd_paths': list(rsd_paths),
+                'csv_paths': list(csv_paths),
                 'session_dir': session_dir,
                 'workflow': workflow,
                 'nchunk': nchunk,
@@ -722,7 +733,8 @@ def _parse_multipart_form_data(
         filename = disposition_params.get('filename')
         if filename:
             safe_name = Path(filename).name
-            if not safe_name.lower().endswith('.rsd'):
+            lower_name = safe_name.lower()
+            if not (lower_name.endswith('.rsd') or lower_name.endswith('.csv')):
                 continue
             dest = batch_dir / safe_name
             with open(dest, 'wb') as out:

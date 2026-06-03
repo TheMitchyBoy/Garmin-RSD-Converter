@@ -8,7 +8,9 @@ from pathlib import Path
 from batch_processor import (
     discover_rsd_files,
     format_batch_summary,
+    is_csv_file,
     is_rsd_file,
+    merge_batch_summaries,
     BatchSummary,
     FileJobResult,
 )
@@ -27,6 +29,23 @@ class TestBatchDiscovery(unittest.TestCase):
         rsd.write_bytes(b'\x00')
         self.assertTrue(is_rsd_file(rsd))
         self.assertFalse(is_rsd_file(self.root / 'notes.txt'))
+
+    def test_is_csv_file(self):
+        csv_file = self.root / 'survey.csv'
+        csv_file.write_text('latitude,longitude,depth_m\n', encoding='utf-8')
+        self.assertTrue(is_csv_file(csv_file))
+        self.assertFalse(is_csv_file(self.root / 'notes.txt'))
+
+    def test_merge_batch_summaries(self):
+        first = BatchSummary(results=[
+            FileJobResult(input_path=Path('a.csv'), success=True, message='ok'),
+        ])
+        second = BatchSummary(results=[
+            FileJobResult(input_path=Path('b.RSD'), success=False, message='fail'),
+        ])
+        merged = merge_batch_summaries(first, second)
+        self.assertEqual(merged.total, 2)
+        self.assertEqual(merged.succeeded, 1)
 
     def test_discover_from_directory_recursive(self):
         nested = self.root / 'trips' / 'june'
