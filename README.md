@@ -206,6 +206,7 @@ Heatmap and contour outputs are GeoJSON polygon/line layers written alongside th
 ```
 pingverter_adapter.py   # RSD decode + CSV normalization (core)
 sonar_converter_streaming.py  # Thin CLI entry for conversion
+sonar_playback.py       # Live-style scrolling sonar video/HTML playback
 sonar_cli.py            # Main command-line interface
 batch_processor.py      # Multi-file discovery and bulk runs
 sonar_upload_server.py  # Browser upload UI
@@ -225,6 +226,7 @@ geo_utils.py            # Garmin coordinate decoding helpers
 
 test_converter.py       # Export and analysis unit tests
 test_pingverter_adapter.py  # PINGVerter adapter tests
+test_sonar_playback.py  # Sonar playback rendering tests
 test_batch_processor.py # Batch discovery tests
 ```
 
@@ -245,7 +247,7 @@ Run both before publishing maps or sharing dashboards from a new recording.
 ## Testing
 
 ```bash
-python -m unittest test_converter.py test_batch_processor.py test_pingverter_adapter.py
+python -m unittest test_converter.py test_batch_processor.py test_pingverter_adapter.py test_sonar_playback.py
 ```
 
 ---
