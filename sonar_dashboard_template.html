@@ -170,6 +170,7 @@
           <div class="echogram-hud" id="echoHud">Ping — · depth — m</div>
           </div>
           <p class="echogram-note">Tip: start with <strong>Waterfall</strong>, use <strong>Bottom-lock</strong> for fish close to seabed, compare <strong>Contrast</strong> and <strong>Change</strong> for weak targets, then tune <strong>HomePort palette, gain, and clutter reject</strong> to match legacy sonar reading style. Use <strong>Shift + wheel</strong> to zoom depth and <strong>Shift + drag</strong> to pan from surface to bottom. Clicking the echogram locks the cursor at that exact fish spot for labeling.</p>
+          <p class="echogram-note">Tip: start with <strong>Waterfall</strong>, use <strong>Bottom-lock</strong> for fish close to seabed, compare <strong>Contrast</strong> and <strong>Change</strong> for weak targets, then tune <strong>HomePort palette, gain, and clutter reject</strong> to match legacy sonar reading style. Use <strong>Shift + wheel</strong> to zoom depth and <strong>Shift + drag</strong> to pan from surface to bottom. Clicking the echogram locks the cursor at that exact fish spot for labeling.</p>
         </div>
       </div>
     </section>
@@ -679,6 +680,39 @@
       ctx.setLineDash([3, 4]);
       for (let d = Math.ceil(depthMin / stepDepth) * stepDepth; d < depthMax; d += stepDepth) {
         const y = ((d / maxDepth) - depthViewMinFrac) / Math.max(1e-6, depthViewMaxFrac - depthViewMinFrac) * h;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      if (sliceLen < 2) return;
+      const pingSpacing = Math.max(25, Math.round(sliceLen / 6));
+      ctx.strokeStyle = 'rgba(148,163,184,0.17)';
+      ctx.lineWidth = 1;
+      ctx.font = '10px sans-serif';
+      ctx.fillStyle = 'rgba(203,213,225,0.65)';
+      for (let idx = Math.ceil(startIdx / pingSpacing) * pingSpacing; idx < (startIdx + sliceLen); idx += pingSpacing) {
+        const local = idx - startIdx;
+        const x = ((local + 0.5) / Math.max(1, sliceLen)) * w;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+        ctx.fillText('p' + idx, Math.min(w - 34, x + 3), h - 6);
+      }
+    }
+
+    function drawHomePortGrid(maxDepth, startIdx, sliceLen) {
+      const w = canvas.width;
+      const h = canvas.height;
+      const stepDepth = maxDepth <= 25 ? 5 : (maxDepth <= 80 ? 10 : 20);
+      ctx.strokeStyle = 'rgba(148,163,184,0.24)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      for (let d = stepDepth; d < maxDepth; d += stepDepth) {
+        const y = (d / maxDepth) * h;
         ctx.beginPath();
         ctx.moveTo(0, y);
         ctx.lineTo(w, y);
