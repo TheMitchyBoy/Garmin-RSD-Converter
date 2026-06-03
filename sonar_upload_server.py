@@ -28,7 +28,7 @@ from batch_processor import batch_process_uploads, format_batch_summary
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB per request
-APP_BUILD_ID = '2026.06.03-csv-upload'
+APP_BUILD_ID = '2026.06.03-upload-fix'
 # Hosted (Railway) web uploads: stream to disk; avoid loading huge bodies in RAM.
 WEB_UPLOAD_MAX_BYTES = 150 * 1024 * 1024  # 150 MB per request on public UI
 READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
@@ -183,13 +183,15 @@ def _parse_request_form_data_streaming(
             'Convert locally with: python sonar_cli.py convert yourfile.RSD'
         )
 
-    uploads_root.mkdir(parents=True, exist_ok=True)
-    raw_path = uploads_root / f'raw-{uuid.uuid4().hex}.multipart'
-    try:
-        _read_request_body_to_file(rfile, content_length, raw_path)
-        return _parse_multipart_from_path(boundary, raw_path, uploads_root)
-    finally:
-        raw_path.unlink(missing_ok=True)
+    body = bytearray()
+    remaining = content_length
+    while remaining > 0:
+        chunk = rfile.read(min(READ_CHUNK_SIZE, remaining))
+        if not chunk:
+            raise ValueError('Upload ended unexpectedly (connection closed)')
+        body.extend(chunk)
+        remaining -= len(chunk)
+    return _parse_multipart_form_data(boundary, bytes(body), uploads_root)
 
 
 
@@ -333,7 +335,7 @@ def _upload_page_html(port: int) -> str:
 
     <button type="button" id="submitBtn" disabled>Upload and process</button>
     <div id="status"></div>
-    <p class="deploy-version" style="margin-top:1.5rem;font-size:0.75rem;color:var(--muted);">Build: 2026.06.03-csv-upload · accepts .RSD + .CSV</p>
+    <p class="deploy-version" style="margin-top:1.5rem;font-size:0.75rem;color:var(--muted);">Build: 2026.06.03-upload-fix · accepts .RSD + .CSV</p>
   </div>
   <script>
     const dropzone = document.getElementById('dropzone');
@@ -437,19 +439,29 @@ def _upload_page_html(port: int) -> str:
     function uploadFormData(form) {{
       return new Promise((resolve, reject) => {{
         const xhr = new XMLHttpRequest();
+        const started = Date.now();
+        let lastLoaded = 0;
+        const tick = setInterval(() => {{
+          const secs = Math.round((Date.now() - started) / 1000);
+          const loadedMb = (lastLoaded / 1024 / 1024).toFixed(1);
+          statusEl.textContent = 'Uploading… ' + loadedMb + ' MB sent (' + secs + 's)';
+        }}, 1000);
+        const stopTick = () => clearInterval(tick);
         xhr.open('POST', '/api/process');
         xhr.timeout = 900000;
         xhr.upload.onprogress = (evt) => {{
+          lastLoaded = evt.loaded;
           if (evt.lengthComputable) {{
-            const pct = Math.round((evt.loaded / evt.total) * 100);
+            const pct = Math.max(1, Math.round((evt.loaded / evt.total) * 100));
             statusEl.textContent = 'Uploading… ' + pct + '% ('
               + (evt.loaded / 1024 / 1024).toFixed(1) + ' / '
               + (evt.total / 1024 / 1024).toFixed(1) + ' MB)';
           }} else {{
-            statusEl.textContent = 'Uploading… ' + (evt.loaded / 1024 / 1024).toFixed(1) + ' MB sent';
+            statusEl.textContent = 'Uploading… ' + (lastLoaded / 1024 / 1024).toFixed(1) + ' MB sent';
           }}
         }};
         xhr.onload = () => {{
+          stopTick();
           const text = xhr.responseText || '';
           let data;
           try {{
@@ -463,8 +475,8 @@ def _upload_page_html(port: int) -> str:
             data,
           }});
         }};
-        xhr.onerror = () => reject(new Error(networkErrorHint('Upload failed')));
-        xhr.ontimeout = () => reject(new Error(networkErrorHint('Upload timed out after 15 minutes')));
+        xhr.onerror = () => {{ stopTick(); reject(new Error(networkErrorHint('Upload failed'))); }};
+        xhr.ontimeout = () => {{ stopTick(); reject(new Error(networkErrorHint('Upload timed out after 15 minutes'))); }};
         xhr.send(form);
       }});
     }}
@@ -617,7 +629,17 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
             logger.exception('Unhandled error in POST /api/process')
             self._send_json({'error': str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
+    def handle_one_request(self) -> None:
+        if self.connection is not None:
+            self.connection.settimeout(900.0)
+        super().handle_one_request()
+
     def _handle_process_upload(self) -> None:
+        expect = self.headers.get('Expect', '')
+        if expect.lower() == '100-continue':
+            self.send_response_only(HTTPStatus.CONTINUE)
+            self.end_headers()
+
         content_length = int(self.headers.get('Content-Length', 0))
         if content_length <= 0:
             self._send_json({'error': 'Empty request'}, HTTPStatus.BAD_REQUEST)
