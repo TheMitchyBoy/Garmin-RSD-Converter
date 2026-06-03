@@ -28,7 +28,7 @@ from batch_processor import batch_process_uploads, format_batch_summary
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB per request
-APP_BUILD_ID = '2026.06.03-rsd-csv'
+APP_BUILD_ID = '2026.06.03-fix-click'
 # Hosted (Railway) web uploads: stream to disk; avoid loading huge bodies in RAM.
 WEB_UPLOAD_MAX_BYTES = 150 * 1024 * 1024  # 150 MB per request on public UI
 READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
@@ -289,12 +289,12 @@ def _upload_page_html(port: int) -> str:
     <h1>Garmin Sonar Survey Upload</h1>
     <p class="lead">Upload <code>.RSD</code> recordings to convert, or <code>.CSV</code> survey files to analyze (maps, heatmaps, fish, dashboard). Hosted uploads are limited to 150&nbsp;MB per request.</p>
 
-    <div class="dropzone" id="dropzone">
+    <label class="dropzone" id="dropzone" for="fileInput">
       <p><strong>Click or drag files here</strong></p>
       <p>Supports Garmin <code>.RSD</code> and project <code>.CSV</code> files</p>
       <input type="file" id="fileInput" accept=".rsd,.RSD,.csv,.CSV" multiple>
       <div class="file-list" id="fileList"></div>
-    </div>
+    </label>
 
     <div class="options">
       <label>
@@ -366,8 +366,8 @@ def _upload_page_html(port: int) -> str:
       }}
     }}
 
-    dropzone.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', e => addFiles(e.target.files));
+    fileInput.addEventListener('click', e => e.stopPropagation());
 
     ['dragenter', 'dragover'].forEach(evt => {{
       dropzone.addEventListener(evt, e => {{
@@ -455,7 +455,9 @@ def _upload_page_html(port: int) -> str:
           await sleep(2000);
           let statusRes, statusData;
           try {{
-            ({{ res: statusRes, data: statusData }}) = await fetchJson('/api/jobs/' + encodeURIComponent(jobId));
+            const pollResult = await fetchJson('/api/jobs/' + encodeURIComponent(jobId));
+            statusRes = pollResult.res;
+            statusData = pollResult.data;
           }} catch (pollErr) {{
             pollErrors += 1;
             if (pollErrors >= 15) throw pollErr;
