@@ -4,12 +4,14 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from sonar_web_app import (
     WebAppConfig,
     _app_html,
     _collect_output_links,
     _safe_session_path,
+    resolve_port,
 )
 
 
@@ -26,6 +28,12 @@ class TestSonarWebApp(unittest.TestCase):
         html = _app_html()
         self.assertIn('Watch sonar feed', html)
         self.assertIn('/api/playback', html)
+
+    def test_resolve_port_prefers_railway_port(self):
+        import os
+        with patch.dict(os.environ, {'PORT': '3000', 'SONAR_PORT': '8080'}, clear=False):
+            self.assertEqual(resolve_port(), 3000)
+        self.assertEqual(resolve_port(9000), 9000)
 
     def test_safe_session_path_blocks_traversal(self):
         session_id = 'abc123'

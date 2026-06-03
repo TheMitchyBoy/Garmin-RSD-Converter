@@ -256,6 +256,7 @@ Session data persists in the `sonar-data` Docker volume.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `PORT` | `8080` | **Set by Railway** — public listen port inside container |
 | `SONAR_HOST` | `0.0.0.0` | Bind address |
 | `SONAR_PORT` | `8080` | HTTP port |
 | `SONAR_DATA_DIR` | `./data` | Uploads and session outputs |
@@ -282,6 +283,22 @@ server {
 ```
 
 Run the app as a systemd service or inside Docker on the same host.
+
+### Railway (managed deploy)
+
+Railway is the easiest managed host for this app. The repo includes `railway.toml`, a production `Dockerfile`, and a full guide:
+
+**→ [RAILWAY.md](RAILWAY.md)**
+
+Summary:
+
+1. Connect this GitHub repo to [Railway](https://railway.app/)
+2. Deploy (Docker build runs automatically)
+3. Add a **volume** mounted at `/data`
+4. Set memory to **2 GB+**
+5. Generate a public domain in Railway settings
+
+The app reads Railway's `PORT` variable automatically.
 
 ---
 
@@ -445,7 +462,7 @@ python -m unittest test_converter.py test_batch_processor.py test_pingverter_ada
 
 ## Further reading
 
-- [FEATURES_GUIDE.md](FEATURES_GUIDE.md) — detailed feature walkthrough
+- [RAILWAY.md](RAILWAY.md) — deploy on Railway (recommended managed hosting)
 - [SONAR_QUICKSTART.md](SONAR_QUICKSTART.md) — step-by-step conversion notes
 - [PINGVerter on PyPI](https://pypi.org/project/pingverter/) — underlying RSD decoder
 - [Garmin RSD format notes (Herbert Oppmann)](https://www.memotech.franken.de/FileFormats/Garmin_RSD_Format.pdf)

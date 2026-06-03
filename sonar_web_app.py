@@ -35,6 +35,22 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_UPLOAD_BYTES = int(os.environ.get('SONAR_MAX_UPLOAD_BYTES', 2 * 1024 * 1024 * 1024))
 
 
+def resolve_port(port: Optional[int] = None) -> int:
+    """
+    Resolve HTTP listen port for local dev and PaaS hosts.
+
+    Railway, Render, and similar platforms inject ``PORT``; ``SONAR_PORT`` is
+    the project-specific override when both are set intentionally.
+    """
+    if port is not None:
+        return int(port)
+    for key in ('PORT', 'SONAR_PORT'):
+        value = os.environ.get(key)
+        if value:
+            return int(value)
+    return 8080
+
+
 @dataclass
 class WebAppConfig:
     """Runtime configuration for the sonar web application."""
@@ -739,7 +755,7 @@ def run_web_app(
     """Start the sonar web application (blocks until interrupted)."""
     config = WebAppConfig(
         host=host or os.environ.get('SONAR_HOST', '0.0.0.0'),
-        port=int(port or os.environ.get('SONAR_PORT', '8080')),
+        port=resolve_port(port),
         data_dir=Path(data_dir or os.environ.get('SONAR_DATA_DIR', 'data')),
     )
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -772,8 +788,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         help='Bind address (default: 0.0.0.0, or SONAR_HOST env)',
     )
     parser.add_argument(
-        '--port', type=int, default=int(os.environ.get('SONAR_PORT', '8080')),
-        help='Port (default: 8080, or SONAR_PORT env)',
+        '--port', type=int, default=None,
+        help='Port (default: PORT or SONAR_PORT env, else 8080)',
     )
     parser.add_argument(
         '--data-dir', type=Path, default=Path(os.environ.get('SONAR_DATA_DIR', 'data')),

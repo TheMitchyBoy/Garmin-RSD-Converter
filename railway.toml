@@ -1,0 +1,14 @@
+# Railway deployment config — https://docs.railway.app/guides/config-as-code
+#
+# After deploy: attach a volume mounted at /data so uploads survive restarts.
+# Recommended plan memory: 2 GB minimum (PINGVerter + numpy/pandas).
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+numReplicas = 1
