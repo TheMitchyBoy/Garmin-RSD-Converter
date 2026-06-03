@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.10', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile Python modules
+        run: python3 -m py_compile *.py fixtures/*.py
+
+      - name: Run unit tests
+        run: python3 -m unittest discover -v
+
+      - name: Verify CLI help
+        run: python3 sonar_cli.py --help
+
+      - name: End-to-end sample pipeline
+        run: |
+          python3 fixtures/generate_sample_rsd.py /tmp/sample.rsd
+          python3 sonar_cli.py convert /tmp/sample.rsd -o /tmp/sample.csv --maps all
+          python3 sonar_cli.py heatmap /tmp/sample.csv --all
+          python3 sonar_cli.py fish detect /tmp/sample.csv
+          python3 sonar_cli.py health /tmp/sample_fish_detections.geojson --report

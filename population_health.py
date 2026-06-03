@@ -13,11 +13,15 @@ import logging
 from collections import defaultdict
 import statistics
 
+from sonar_schema import HEURISTIC_DISCLAIMER
+
 logger = logging.getLogger(__name__)
 
 
 class PopulationHealthAnalytics:
-    """Analyze fish population health from sonar data"""
+    """Analyze heuristic population metrics from sonar intensity detections."""
+
+    DISCLAIMER = HEURISTIC_DISCLAIMER
     
     @staticmethod
     def analyze_population_metrics(
@@ -195,47 +199,51 @@ class PopulationHealthAnalytics:
             health = population_metrics.get('health_indicators', {})
             pop = population_metrics.get('population_composition', {})
             
-            report = f"""# Fishing Area Health Report
+            report = f"""# Sonar Survey Heuristic Report
+
+> **Disclaimer:** {PopulationHealthAnalytics.DISCLAIMER}
+> Scores below are composite heuristics derived from sonar intensity patterns,
+> not biological survey or fisheries assessment data.
 
 ## {location_name}
 **Report Date:** {population_metrics.get('timestamp', 'Unknown')}
 
 ---
 
-## Overall Population Health
+## Composite Heuristic Score
 
-**Status:** 🟢 {health.get('overall_status', 'Unknown')}  
-**Health Score:** {health.get('overall_health_score', 'N/A')}/100
+**Status:** {health.get('overall_status', 'Unknown')}  
+**Score:** {health.get('overall_health_score', 'N/A')}/100
 
 ---
 
 ## Key Findings
 
-### Population Abundance
+### Detection Density
 - **Status:** {health.get('abundance_status', 'Unknown')}
 - **Abundance Score:** {health.get('abundance_score', 'N/A')}/100
-- **Fish Detected:** {population_metrics.get('total_detections', 0):,}
+- **Intensity Signatures Detected:** {population_metrics.get('total_detections', 0):,}
 
-### Population Activity
+### Intensity Activity
 - **Status:** {health.get('activity_status', 'Unknown')}
 - **Activity Score:** {health.get('activity_score', 'N/A')}/100
 - **Average Intensity:** {population_metrics.get('population_health', {}).get('average_intensity', 'N/A')}
 
-### Population Diversity
+### Signature Diversity
 - **Status:** {health.get('diversity_status', 'Unknown')}
 - **Diversity Score:** {health.get('diversity_score', 'N/A')}/100
-- **Schooling Fish:** {pop.get('school', 0)} ({pop.get('school_percentage', 0):.1f}%)
+- **High-intensity clusters:** {pop.get('school', 0)} ({pop.get('school_percentage', 0):.1f}%)
 
 ---
 
-## Population Breakdown
+## Signature Breakdown
 
 | Size Category | Count | Percentage |
 |---|---|---|
-| Small Fish | {pop.get('small', 0)} | {pop.get('small', 0)/population_metrics.get('total_detections', 1)*100:.1f}% |
-| Medium Fish | {pop.get('medium', 0)} | {pop.get('medium', 0)/population_metrics.get('total_detections', 1)*100:.1f}% |
-| Large Fish | {pop.get('large', 0)} | {pop.get('large', 0)/population_metrics.get('total_detections', 1)*100:.1f}% |
-| Schools | {pop.get('school', 0)} | {pop.get('school_percentage', 0):.1f}% |
+| Small signatures | {pop.get('small', 0)} | {pop.get('small', 0)/population_metrics.get('total_detections', 1)*100:.1f}% |
+| Medium signatures | {pop.get('medium', 0)} | {pop.get('medium', 0)/population_metrics.get('total_detections', 1)*100:.1f}% |
+| Large signatures | {pop.get('large', 0)} | {pop.get('large', 0)/population_metrics.get('total_detections', 1)*100:.1f}% |
+| High-intensity clusters | {pop.get('school', 0)} | {pop.get('school_percentage', 0):.1f}% |
 
 ---
 
@@ -251,7 +259,11 @@ class PopulationHealthAnalytics:
 
 ## Health Assessment
 
-### What This Means
+### Interpretation
+
+These scores summarize sonar intensity patterns only. They should not be used as
+biological population assessments or fisheries management decisions without
+independent validation.
 
 """
             
@@ -259,48 +271,46 @@ class PopulationHealthAnalytics:
             overall_status = health.get('overall_status', 'Unknown')
             
             if overall_status == 'Excellent':
-                report += """**The fishing area shows EXCELLENT population health.**
+                report += """**The survey area shows a high density of strong intensity signatures.**
 
-The area demonstrates:
-- Strong and stable fish populations
-- Good diversity in fish sizes and schooling behavior
-- High fish activity levels
-- Suitable habitat conditions
+Observed patterns include:
+- Many detections across the track
+- Diverse intensity categories
+- Elevated average intensity readings
+- Depth readings within the configured detection window
 
-**Recommendation:** This area is suitable for sustainable fishing operations with proper management.
+**Recommendation:** Use these results as exploratory sonar analysis only.
+Validate with independent survey methods before drawing biological conclusions.
 """
             elif overall_status == 'Good':
-                report += """**The fishing area shows GOOD population health.**
+                report += """**The survey area shows moderate-to-strong intensity signature activity.**
 
-The area demonstrates:
-- Stable fish populations
-- Adequate diversity
-- Reasonable fish activity
-- Generally suitable habitat conditions
+Observed patterns include:
+- Stable detection counts
+- Reasonable category diversity
+- Moderate intensity levels
 
-**Recommendation:** Maintain current fishing practices and monitor trends.
+**Recommendation:** Continue monitoring with consistent survey parameters.
 """
             elif overall_status == 'Fair':
-                report += """**The fishing area shows FAIR population health.**
+                report += """**The survey area shows limited intensity signature activity.**
 
-The area demonstrates:
-- Moderate fish populations
-- Limited diversity
-- Variable fish activity
-- Some habitat concerns
+Observed patterns include:
+- Moderate detection counts
+- Limited category diversity
+- Variable intensity levels
 
-**Recommendation:** Consider implementing conservation measures and monitoring closely.
+**Recommendation:** Review sonar settings and survey coverage before interpreting results.
 """
             else:
-                report += """**The fishing area shows POOR population health.**
+                report += """**The survey area shows sparse intensity signature activity.**
 
-The area demonstrates:
-- Low fish populations
+Observed patterns include:
+- Few detections
 - Limited diversity
-- Low fish activity levels
-- Potential habitat degradation
+- Low average intensity
 
-**Recommendation:** Implement immediate conservation measures and reduce fishing pressure.
+**Recommendation:** Treat results as low-confidence exploratory data.
 """
             
             report += f"""
@@ -309,18 +319,20 @@ The area demonstrates:
 
 ## Methodology
 
-This report is based on sonar survey data analysis using:
-- Fish detection algorithms (intensity-based classification)
-- Population aggregation metrics
-- Habitat parameter analysis
-- Health score calculations
+This report is based on heuristic sonar intensity analysis:
+- Intensity-threshold signature classification
+- Detection aggregation metrics
+- Depth distribution summaries
+- Composite heuristic scoring
 
-**Data Quality:** Sonar confidence average = {population_metrics.get('population_health', {}).get('average_confidence', 'N/A')}
+**Data Quality:** Average detection confidence = {population_metrics.get('population_health', {}).get('average_confidence', 'N/A')}
+
+**Important:** {PopulationHealthAnalytics.DISCLAIMER}
 
 ---
 
 **Generated by:** Garmin Sonar Converter  
-**Report Version:** 1.0
+**Report Version:** 1.1
 
 """
             
