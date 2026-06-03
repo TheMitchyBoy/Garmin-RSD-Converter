@@ -62,6 +62,7 @@ Thumbs.db
 
 # Project specific
 output/
+uploads/
 results/
 data/
 *.rsd
