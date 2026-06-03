@@ -8,16 +8,14 @@ Uses only the Python standard library (no pip dependencies).
 from __future__ import annotations
 
 import argparse
-import cgi
 import json
 import logging
-import shutil
 import sys
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from batch_processor import batch_convert, batch_pipeline, format_batch_summary
@@ -293,27 +291,24 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
             )
             return
 
-        environ = {
-            'REQUEST_METHOD': 'POST',
-            'CONTENT_TYPE': self.headers.get('Content-Type', ''),
-            'CONTENT_LENGTH': str(content_length),
-        }
-        form = cgi.FieldStorage(
-            fp=self.rfile,
-            headers=self.headers,
-            environ=environ,
-            keep_blank_values=True,
-        )
-
-        workflow = _field_value(form, 'workflow') or 'convert'
-        maps = _field_value(form, 'maps') or ''
-        location = _field_value(form, 'location') or None
         try:
-            nchunk = int(_field_value(form, 'nchunk') or _field_value(form, 'stride') or '500')
+            fields, saved_paths = _parse_request_form_data(
+                self.headers.get('Content-Type', ''),
+                self.rfile.read(content_length),
+                self.uploads_root,
+            )
+        except ValueError as exc:
+            self._send_json({'error': str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+
+        workflow = _field_value(fields, 'workflow') or 'convert'
+        maps = _field_value(fields, 'maps') or ''
+        location = _field_value(fields, 'location') or None
+        try:
+            nchunk = int(_field_value(fields, 'nchunk') or _field_value(fields, 'stride') or '500')
         except ValueError:
             nchunk = 500
 
-        saved_paths = _save_uploaded_files(form, self.uploads_root)
         if not saved_paths:
             self._send_json({'error': 'No .RSD files uploaded'}, HTTPStatus.BAD_REQUEST)
             return
@@ -366,37 +361,110 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
         })
 
 
-def _field_value(form: cgi.FieldStorage, name: str) -> Optional[str]:
-    if name not in form:
-        return None
-    field = form[name]
-    if isinstance(field, list):
-        return field[0].value if field else None
-    return field.value
+def _field_value(fields: Dict[str, List[str]], name: str) -> Optional[str]:
+    values = fields.get(name)
+    return values[0] if values else None
 
 
-def _save_uploaded_files(form: cgi.FieldStorage, uploads_root: Path) -> List[Path]:
+def _parse_header_value(value: str) -> Tuple[str, Dict[str, str]]:
+    parts = [part.strip() for part in value.split(';') if part.strip()]
+    if not parts:
+        return '', {}
+
+    main = parts[0].lower()
+    params: Dict[str, str] = {}
+    for item in parts[1:]:
+        if '=' not in item:
+            continue
+        key, raw_value = item.split('=', 1)
+        key = key.strip().lower()
+        raw_value = raw_value.strip()
+        if raw_value.startswith('"') and raw_value.endswith('"') and len(raw_value) >= 2:
+            raw_value = raw_value[1:-1]
+        params[key] = raw_value
+    return main, params
+
+
+def _parse_request_form_data(
+    content_type_header: str,
+    body: bytes,
+    uploads_root: Path,
+) -> Tuple[Dict[str, List[str]], List[Path]]:
+    content_type, params = _parse_header_value(content_type_header)
+
+    if content_type == 'application/x-www-form-urlencoded':
+        decoded = body.decode('utf-8', errors='replace')
+        parsed = parse_qs(decoded, keep_blank_values=True)
+        fields = {key: values for key, values in parsed.items()}
+        return fields, []
+
+    if content_type != 'multipart/form-data':
+        raise ValueError('Unsupported Content-Type. Expected multipart/form-data upload.')
+
+    boundary = params.get('boundary')
+    if not boundary:
+        raise ValueError('Missing multipart boundary in Content-Type header.')
+
+    return _parse_multipart_form_data(boundary, body, uploads_root)
+
+
+def _parse_multipart_form_data(
+    boundary: str,
+    body: bytes,
+    uploads_root: Path,
+) -> Tuple[Dict[str, List[str]], List[Path]]:
     uploads_root.mkdir(parents=True, exist_ok=True)
     batch_dir = uploads_root / uuid.uuid4().hex[:12]
     batch_dir.mkdir(parents=True, exist_ok=True)
 
+    fields: Dict[str, List[str]] = {}
     saved: List[Path] = []
-    file_fields = form['files'] if 'files' in form else []
-    if not isinstance(file_fields, list):
-        file_fields = [file_fields]
 
-    for field in file_fields:
-        if not getattr(field, 'filename', None):
-            continue
-        name = Path(field.filename).name
-        if not name.lower().endswith('.rsd'):
-            continue
-        dest = batch_dir / name
-        with open(dest, 'wb') as out:
-            shutil.copyfileobj(field.file, out)
-        saved.append(dest)
+    delimiter = f'--{boundary}'.encode('utf-8')
+    parts = body.split(delimiter)
+    if len(parts) < 3:
+        raise ValueError('Malformed multipart body.')
 
-    return saved
+    for part in parts[1:]:
+        part = part.lstrip(b'\r\n')
+        if not part or part in (b'--', b'--\r\n'):
+            continue
+        if part.endswith(b'--'):
+            part = part[:-2]
+        if part.endswith(b'\r\n'):
+            part = part[:-2]
+        if not part:
+            continue
+
+        header_blob, separator, payload = part.partition(b'\r\n\r\n')
+        if not separator:
+            continue
+
+        part_headers: Dict[str, str] = {}
+        for raw_line in header_blob.split(b'\r\n'):
+            key, sep, value = raw_line.partition(b':')
+            if not sep:
+                continue
+            part_headers[key.decode('latin-1').strip().lower()] = value.decode('latin-1').strip()
+
+        _, disposition_params = _parse_header_value(part_headers.get('content-disposition', ''))
+        field_name = disposition_params.get('name')
+        if not field_name:
+            continue
+
+        filename = disposition_params.get('filename')
+        if filename:
+            safe_name = Path(filename).name
+            if not safe_name.lower().endswith('.rsd'):
+                continue
+            dest = batch_dir / safe_name
+            with open(dest, 'wb') as out:
+                out.write(payload)
+            saved.append(dest)
+        else:
+            fields.setdefault(field_name, []).append(payload.decode('utf-8', errors='replace'))
+
+    return fields, saved
 
 
 def run_server(
