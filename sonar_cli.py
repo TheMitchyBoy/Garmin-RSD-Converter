@@ -660,6 +660,7 @@ def cmd_dashboard(args):
         metrics,
         location_name=args.location,
         depth_geojson_file=depth_file,
+        seabed_3d_file=seabed_3d,
     )
 
     print("✓ Dashboard created!")
@@ -751,6 +752,7 @@ def cmd_pipeline(args):
         metrics,
         location_name=location_name,
         depth_geojson_file=depth_hm,
+        seabed_3d_file=seabed_3d,
     )
 
     print("Pipeline complete.")

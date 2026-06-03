@@ -33,6 +33,7 @@ class WebVisualizer:
         location_name: str = "Fishing Survey Area",
         output_file: Optional[Path] = None,
         depth_geojson_file: Optional[Path] = None,
+        seabed_3d_file: Optional[Path] = None,
         csv_file: Optional[Path] = None,
         grid_size: float = DEFAULT_DASHBOARD_GRID_SIZE,
     ) -> Path:
@@ -45,6 +46,7 @@ class WebVisualizer:
             location_name: Display name for the survey
             output_file: Optional output HTML path
             depth_geojson_file: Optional bathymetry/seabed heatmap GeoJSON
+            seabed_3d_file: Optional HTML 3D seabed chart
             csv_file: Source survey CSV (route + echogram + labeling)
             grid_size: Seabed grid cell size in degrees (smaller = finer map squares)
         """
@@ -86,6 +88,7 @@ class WebVisualizer:
         depth_legend_html = WebVisualizer._build_depth_legend_html(min_depth_m, max_depth_m)
         fish_legend_html = WebVisualizer._build_fish_legend_html()
         has_seabed = bool(seabed_features)
+        seabed_button_html = WebVisualizer._build_seabed_3d_button_html(seabed_3d_file)
 
         template_path = Path(__file__).with_name("sonar_dashboard_template.html")
         depth_block = (
@@ -135,6 +138,7 @@ class WebVisualizer:
             .replace("__DEPTH_LEGEND__", depth_block)
             .replace("__SPECIES_OPTIONS__", fish_species_select_html())
             .replace("__FISH_LEGEND__", fish_legend_html)
+            .replace("__SEABED3D_BUTTON__", seabed_button_html)
             .replace("__ROWS__", rows)
             .replace("__FISH_GEOJSON__", fish_geojson)
             .replace("__SEABED_GEOJSON__", seabed_geojson)
@@ -183,6 +187,20 @@ class WebVisualizer:
             location_name=location_name,
             output_file=output_file,
             depth_geojson_file=depth_geojson_file,
+        )
+
+    @staticmethod
+    def _build_seabed_3d_button_html(seabed_3d_file: Optional[Path]) -> str:
+        if not seabed_3d_file:
+            return ""
+        path = Path(seabed_3d_file)
+        href = html.escape(path.name)
+        return (
+            '<div class="seabed3d-row">'
+            f'<a class="seabed3d-btn" href="{href}" target="_blank" rel="noopener">'
+            'Open 3D seabed chart ↗'
+            '</a>'
+            '</div>'
         )
 
     @staticmethod
