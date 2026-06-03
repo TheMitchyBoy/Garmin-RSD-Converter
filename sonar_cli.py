@@ -41,6 +41,9 @@ Examples:
   # Detect fish signatures and create a health report
   python sonar_cli.py fish detect sonar_data.csv
   python sonar_cli.py health sonar_data_fish_detections.geojson --report
+
+  # Interactive seabed + fish survey map
+  python sonar_cli.py map sonar_data.csv --location "Lake Survey"
         '''
     )
     
@@ -67,7 +70,7 @@ Examples:
     heatmap_cmd.add_argument('--temperature', action='store_true', help='Generate temperature heatmap')
     heatmap_cmd.add_argument('--all', action='store_true', help='Generate all heatmaps')
     heatmap_cmd.add_argument('--grid-size', type=float, default=0.01,
-                            help='Grid cell size in degrees (default: 0.01)')
+                            help='Grid cell size in degrees for all heatmap types (default: 0.01)')
 
     # Fish detection command
     fish_cmd = subparsers.add_parser('fish', help='Fish detection and analysis')
@@ -93,6 +96,19 @@ Examples:
     dashboard_cmd.add_argument('--detections', help='Optional fish detections GeoJSON file')
     dashboard_cmd.add_argument('--location', default='Fishing Survey Area',
                               help='Location name')
+    dashboard_cmd.add_argument('--depth-heatmap',
+                              help='Optional seabed/bathymetry GeoJSON (auto-generated from CSV if omitted)')
+    dashboard_cmd.add_argument('--grid-size', type=float, default=0.01,
+                              help='Grid size for auto-generated depth heatmap (default: 0.01)')
+
+    # Survey map command (seabed + fish focused HTML)
+    map_cmd = subparsers.add_parser('map', help='Create seabed + fish survey map HTML')
+    map_cmd.add_argument('csv_file', help='Input sonar CSV file')
+    map_cmd.add_argument('--detections', help='Optional fish detections GeoJSON')
+    map_cmd.add_argument('--depth-heatmap', help='Optional depth/bathymetry GeoJSON')
+    map_cmd.add_argument('--location', default='Sonar Survey', help='Location name')
+    map_cmd.add_argument('--grid-size', type=float, default=0.01,
+                        help='Grid size for bathymetry layer (default: 0.01)')
 
     # Pipeline command
     pipeline_cmd = subparsers.add_parser('pipeline', help='Run the full sonar analysis workflow')
@@ -121,6 +137,8 @@ Examples:
             return cmd_health(args)
         elif args.command == 'dashboard':
             return cmd_dashboard(args)
+        elif args.command == 'map':
+            return cmd_map(args)
         elif args.command == 'pipeline':
             return cmd_pipeline(args)
     except Exception as e:
@@ -256,7 +274,7 @@ def cmd_heatmap(args):
         print(f"✓ Intensity heatmap: {output}")
 
     if args.all or args.depth:
-        output = HeatmapGenerator.create_depth_heatmap(csv_file)
+        output = HeatmapGenerator.create_depth_heatmap(csv_file, grid_size=args.grid_size)
         outputs.append(output)
         print(f"✓ Depth heatmap: {output}")
 
@@ -342,15 +360,49 @@ def cmd_dashboard(args):
         detections_file, _ = FishDetector.detect_fish(csv_file)
 
     metrics = PopulationHealthAnalytics.analyze_population_metrics(detections_file)
+
+    depth_file = Path(args.depth_heatmap) if getattr(args, 'depth_heatmap', None) else None
+    if depth_file is None or not depth_file.exists():
+        depth_file = HeatmapGenerator.create_depth_heatmap(csv_file, grid_size=args.grid_size)
+        print(f"✓ Seabed bathymetry layer: {depth_file}")
+
     dashboard_file = WebVisualizer.create_dashboard(
         detections_file,
         metrics,
         location_name=args.location,
+        depth_geojson_file=depth_file,
     )
 
     print("✓ Dashboard created!")
     print(f"  Open in browser: file://{dashboard_file.absolute()}")
 
+    return 0
+
+
+def cmd_map(args):
+    """Create standalone seabed + fish survey map HTML."""
+    csv_file = Path(args.csv_file)
+
+    if not csv_file.exists():
+        logger.error(f"File not found: {csv_file}")
+        return 1
+
+    detections_file = Path(args.detections) if args.detections else None
+    depth_file = Path(args.depth_heatmap) if args.depth_heatmap else None
+
+    if depth_file is None or not depth_file.exists():
+        depth_file = HeatmapGenerator.create_depth_heatmap(csv_file, grid_size=args.grid_size)
+        print(f"✓ Seabed bathymetry layer: {depth_file}")
+
+    map_file = WebVisualizer.create_survey_map_html(
+        csv_file,
+        detections_file=detections_file,
+        depth_geojson_file=depth_file,
+        location_name=args.location,
+    )
+
+    print("✓ Survey map created!")
+    print(f"  Open in browser: file://{map_file.absolute()}")
     return 0
 
 
@@ -375,8 +427,8 @@ def cmd_pipeline(args):
     print(f"✓ Map exports: {ply_file}, {geojson_file}, {kml_file}, {gpx_file}")
 
     intensity_hm = HeatmapGenerator.create_intensity_heatmap(csv_file)
-    depth_hm = HeatmapGenerator.create_depth_heatmap(csv_file)
-    temperature_hm = HeatmapGenerator.create_temperature_heatmap(csv_file)
+    depth_hm = HeatmapGenerator.create_depth_heatmap(csv_file, grid_size=0.01)
+    temperature_hm = HeatmapGenerator.create_temperature_heatmap(csv_file, grid_size=0.01)
     print(f"✓ Heatmaps: {intensity_hm}, {depth_hm}, {temperature_hm}")
 
     detections_file, detections = FishDetector.detect_fish(csv_file)
@@ -391,6 +443,7 @@ def cmd_pipeline(args):
         detections_file,
         metrics,
         location_name=args.location,
+        depth_geojson_file=depth_hm,
     )
 
     print("Pipeline complete.")

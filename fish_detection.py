@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass
 from collections import defaultdict
 
+from map_visuals import FISH_SIZE_LEGEND
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,28 +55,7 @@ class FishDetector:
     MIN_FISH_DEPTH = 2
     MAX_FISH_DEPTH = 500
 
-    SIZE_STYLES = {
-        'small': {
-            'color': '#22c55e',
-            'marker_size': 'small',
-            'marker_symbol': 'circle',
-        },
-        'medium': {
-            'color': '#f59e0b',
-            'marker_size': 'medium',
-            'marker_symbol': 'circle',
-        },
-        'large': {
-            'color': '#ef4444',
-            'marker_size': 'large',
-            'marker_symbol': 'circle',
-        },
-        'school': {
-            'color': '#7c3aed',
-            'marker_size': 'large',
-            'marker_symbol': 'star',
-        },
-    }
+    SIZE_STYLES = FISH_SIZE_LEGEND
     
     @staticmethod
     def detect_fish(
@@ -228,14 +209,15 @@ class FishDetector:
     
     @staticmethod
     def _get_size_color(size: str) -> str:
-        """Get color for fish size category"""
+        """Get color for fish size category (aligned with map legend)."""
         return FishDetector._get_size_style(size)['color']
 
     @staticmethod
     def _get_size_style(size: str) -> Dict[str, str]:
         """Get map styling for fish size category."""
-        return FishDetector.SIZE_STYLES.get(size, {
+        return FishDetector.SIZE_STYLES.get(str(size).lower(), {
             'color': '#64748b',
+            'label': 'Unknown',
             'marker_size': 'medium',
             'marker_symbol': 'circle',
         })

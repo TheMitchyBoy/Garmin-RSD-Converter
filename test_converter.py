@@ -12,6 +12,7 @@ from fish_detection import FishDetector
 from heatmap_generator import HeatmapGenerator
 from population_health import PopulationHealthAnalytics
 from web_visualizer import WebVisualizer
+from map_visuals import bathymetry_color, grid_cell_polygon
 
 
 class TestMapGenerator(unittest.TestCase):
@@ -81,11 +82,29 @@ class TestMapGenerator(unittest.TestCase):
             self.assertGreaterEqual(len(data['features']), 1)
 
         depth_data = json.loads(depth_file.read_text(encoding='utf-8'))
-        depth_props = depth_data['features'][0]['properties']
+        self.assertEqual(depth_data['properties']['heatmap_type'], 'bathymetry')
+        depth_feature = depth_data['features'][0]
+        self.assertEqual(depth_feature['geometry']['type'], 'Polygon')
+        self.assertIn('layer', depth_feature['properties'])
+        self.assertEqual(depth_feature['properties']['layer'], 'seabed')
+        self.assertRegex(depth_feature['properties']['color'], r'^#[0-9a-f]{6}$')
+        depth_props = depth_feature['properties']
         self.assertIn('depth_band', depth_props)
         self.assertEqual(depth_props['marker-color'], depth_props['color'])
         self.assertEqual(depth_props['fill'], depth_props['color'])
         self.assertEqual(depth_props['stroke'], '#08306b')
+
+    def test_bathymetry_color_ramp(self):
+        shallow = bathymetry_color(2.0, 2.0, 20.0)
+        deep = bathymetry_color(20.0, 2.0, 20.0)
+        self.assertNotEqual(shallow, deep)
+        self.assertTrue(shallow.startswith('#'))
+        self.assertTrue(deep.startswith('#'))
+
+    def test_grid_cell_polygon_closed(self):
+        ring = grid_cell_polygon(0.0, 0.0, 0.01)
+        self.assertEqual(ring[0], ring[-1])
+        self.assertEqual(len(ring), 5)
 
     def test_fish_health_and_dashboard_exports(self):
         csv_file = self._write_full_sonar_csv()
@@ -103,17 +122,22 @@ class TestMapGenerator(unittest.TestCase):
         metrics = PopulationHealthAnalytics.analyze_population_metrics(detections_file)
         self.assertIn('health_indicators', metrics)
 
+        depth_file = HeatmapGenerator.create_depth_heatmap(csv_file)
         dashboard_file = WebVisualizer.create_dashboard(
             detections_file,
             metrics,
             location_name='Test Lake',
             output_file=self.temp_path / 'dashboard.html',
+            depth_geojson_file=depth_file,
         )
+        content = dashboard_file.read_text(encoding='utf-8')
         self.assertTrue(dashboard_file.exists())
-        dashboard_html = dashboard_file.read_text(encoding='utf-8')
-        self.assertIn('Sonar Analysis Dashboard', dashboard_html)
-        self.assertIn('Map legend', dashboard_html)
-        self.assertIn('Confidence halo', dashboard_html)
+        self.assertIn('Sonar Survey Dashboard', content)
+        self.assertIn('leaflet', content)
+        self.assertIn('Seabed depth', content)
+        self.assertIn('Fish detections', content)
+        self.assertIn('layers.seabed', content)
+        self.assertIn('marker size and opacity show confidence', content)
 
     def test_empty_heatmaps_do_not_crash(self):
         csv_file = self.temp_path / 'empty.csv'
