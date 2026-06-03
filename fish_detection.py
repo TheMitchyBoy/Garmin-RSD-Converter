@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass
 from collections import defaultdict
 
+from geolocation_utils import CoordinateSanitizer, is_valid_wgs84
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,6 +80,7 @@ class FishDetector:
         logger.info(f"Detecting fish signatures (intensity range: {min_intensity}-{max_intensity})...")
         
         detections: List[FishDetection] = []
+        coordinate_filter = CoordinateSanitizer()
         
         try:
             with open(csv_file, 'r', encoding='utf-8') as f:
@@ -91,8 +94,12 @@ class FishDetector:
                         intensity_max = float(row.get('sonar_intensity_max', '') or 0)
                         frame_num = int(row.get('frame_number', '') or 0)
                         
-                        if lat == 0 and lon == 0:
+                        if not is_valid_wgs84(lat, lon):
                             continue
+                        sanitized = coordinate_filter.sanitize(lat, lon)
+                        if sanitized is None:
+                            continue
+                        lat, lon = sanitized
                         
                         # Check if this reading matches fish characteristics
                         if min_intensity <= intensity <= max_intensity and \

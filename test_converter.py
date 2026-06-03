@@ -13,6 +13,7 @@ from heatmap_generator import HeatmapGenerator
 from population_health import PopulationHealthAnalytics
 from web_visualizer import WebVisualizer
 from map_visuals import bathymetry_color, grid_cell_polygon
+from geolocation_utils import CoordinateSanitizer, decode_raw_degrees
 
 
 class TestMapGenerator(unittest.TestCase):
@@ -100,6 +101,20 @@ class TestMapGenerator(unittest.TestCase):
         ring = grid_cell_polygon(0.0, 0.0, 0.01)
         self.assertEqual(ring[0], ring[-1])
         self.assertEqual(len(ring), 5)
+
+    def test_decode_raw_degrees_for_alaska(self):
+        coords = decode_raw_degrees(608765432, -1491234567)
+        self.assertIsNotNone(coords)
+        lat, lon = coords
+        self.assertAlmostEqual(lat, 60.8765432, places=7)
+        self.assertAlmostEqual(lon, -149.1234567, places=7)
+
+    def test_coordinate_sanitizer_rejects_large_jump(self):
+        sanitizer = CoordinateSanitizer(max_jump_km=50.0)
+        self.assertIsNotNone(sanitizer.sanitize(60.0, -149.0))
+        self.assertIsNotNone(sanitizer.sanitize(60.001, -149.001))
+        # A sudden transcontinental jump should be rejected as noise/outlier.
+        self.assertIsNone(sanitizer.sanitize(1.5, 19.0))
 
     def test_fish_health_and_dashboard_exports(self):
         csv_file = self._write_full_sonar_csv()

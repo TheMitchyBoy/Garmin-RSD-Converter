@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Optional, Tuple
 import logging
 
+from geolocation_utils import CoordinateSanitizer, decode_raw_degrees
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -22,6 +24,7 @@ class SonarRSDStreamingParser:
         self.frame_count = 0
         self.total_bytes = 0
         self.metadata = {}
+        self.coordinate_sanitizer = CoordinateSanitizer()
     
     def parse_to_csv(self, input_file: Path, output_file: Path, stride: int = 256) -> int:
         """
@@ -123,21 +126,17 @@ class SonarRSDStreamingParser:
         has_data = False
         
         try:
-            # Extract latitude
+            # Extract latitude/longitude from signed int degrees*1e7
             try:
                 lat_raw = struct.unpack('<i', data[4:8])[0]
-                if abs(lat_raw) < 100000000:
-                    frame_data['latitude'] = lat_raw / 10000000.0
-                    has_data = True
-            except:
-                pass
-            
-            # Extract longitude
-            try:
                 lon_raw = struct.unpack('<i', data[8:12])[0]
-                if abs(lon_raw) < 100000000:
-                    frame_data['longitude'] = lon_raw / 10000000.0
-                    has_data = True
+
+                decoded = decode_raw_degrees(lat_raw, lon_raw)
+                if decoded:
+                    sanitized = self.coordinate_sanitizer.sanitize(decoded[0], decoded[1])
+                    if sanitized:
+                        frame_data['latitude'], frame_data['longitude'] = sanitized
+                        has_data = True
             except:
                 pass
             

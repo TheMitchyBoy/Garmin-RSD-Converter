@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple
 import logging
 from collections import defaultdict
 
+from geolocation_utils import CoordinateSanitizer, is_valid_wgs84
 from map_visuals import (
     bathymetry_color,
     grid_cell_polygon,
@@ -80,13 +81,20 @@ class HeatmapGenerator:
         return intensity_color(value, min_val, max_val)
 
     @staticmethod
-    def _read_csv_row(row: dict) -> Optional[Tuple[float, float, float, Optional[float], Optional[float]]]:
+    def _read_csv_row(
+        row: dict,
+        coordinate_filter: CoordinateSanitizer,
+    ) -> Optional[Tuple[float, float, float, Optional[float], Optional[float]]]:
         """Parse a CSV row into lat, lon, intensity, depth, temp."""
         try:
             lat = float(row.get('latitude', '') or 0)
             lon = float(row.get('longitude', '') or 0)
-            if lat == 0 and lon == 0:
+            if not is_valid_wgs84(lat, lon):
                 return None
+            sanitized = coordinate_filter.sanitize(lat, lon)
+            if sanitized is None:
+                return None
+            lat, lon = sanitized
             intensity = float(row.get('sonar_intensity_avg', '') or 0)
             depth_raw = row.get('depth_m')
             depth = float(depth_raw) if depth_raw not in (None, '') else None
@@ -137,12 +145,13 @@ class HeatmapGenerator:
         logger.info(f"Generating intensity heatmap with grid size {grid_size}°...")
         
         grid: Dict[Tuple[int, int], GridCell] = {}
+        coordinate_filter = CoordinateSanitizer()
         
         try:
             with open(csv_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    parsed = HeatmapGenerator._read_csv_row(row)
+                    parsed = HeatmapGenerator._read_csv_row(row, coordinate_filter)
                     if parsed is None:
                         continue
                     lat, lon, intensity, depth, temp = parsed
@@ -235,12 +244,13 @@ class HeatmapGenerator:
         logger.info(f"Generating depth (bathymetry) heatmap with grid size {grid_size}°...")
         
         grid: Dict[Tuple[int, int], GridCell] = {}
+        coordinate_filter = CoordinateSanitizer()
         
         try:
             with open(csv_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    parsed = HeatmapGenerator._read_csv_row(row)
+                    parsed = HeatmapGenerator._read_csv_row(row, coordinate_filter)
                     if parsed is None:
                         continue
                     lat, lon, intensity, depth, temp = parsed
@@ -335,12 +345,13 @@ class HeatmapGenerator:
         logger.info(f"Generating temperature heatmap with grid size {grid_size}°...")
         
         grid: Dict[Tuple[int, int], GridCell] = {}
+        coordinate_filter = CoordinateSanitizer()
         
         try:
             with open(csv_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    parsed = HeatmapGenerator._read_csv_row(row)
+                    parsed = HeatmapGenerator._read_csv_row(row, coordinate_filter)
                     if parsed is None:
                         continue
                     lat, lon, intensity, depth, temp = parsed

@@ -12,6 +12,8 @@ from dataclasses import dataclass
 import logging
 from datetime import datetime
 
+from geolocation_utils import CoordinateSanitizer, decode_raw_degrees
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -60,6 +62,7 @@ class SonarRSDParser:
     def __init__(self):
         self.frames: List[SonarFrame] = []
         self.metadata: Dict = {}
+        self.coordinate_sanitizer = CoordinateSanitizer()
     
     def parse(self, file_path: Path) -> List[SonarFrame]:
         """Parse sonar RSD file"""
@@ -152,11 +155,12 @@ class SonarRSDParser:
             try:
                 lat_raw = struct.unpack('<i', data[offset+4:offset+8])[0]
                 lon_raw = struct.unpack('<i', data[offset+8:offset+12])[0]
-                
-                # Check if values look like coordinates
-                if abs(lat_raw) < 100000000 and abs(lon_raw) < 100000000:
-                    frame.latitude = lat_raw / 10000000.0
-                    frame.longitude = lon_raw / 10000000.0
+
+                decoded = decode_raw_degrees(lat_raw, lon_raw)
+                if decoded:
+                    sanitized = self.coordinate_sanitizer.sanitize(decoded[0], decoded[1])
+                    if sanitized:
+                        frame.latitude, frame.longitude = sanitized
             except:
                 pass
             
@@ -251,7 +255,7 @@ class SonarMapGenerator:
         coordinates = []
         
         for i, frame in enumerate(frames):
-            if frame.latitude and frame.longitude:
+            if frame.latitude is not None and frame.longitude is not None:
                 coordinates.append([frame.longitude, frame.latitude])
                 
                 # Create feature with depth as property
@@ -313,7 +317,7 @@ class SonarMapGenerator:
         gpx_content = gpx_content.format(timestamp=timestamp)
         
         for frame in frames:
-            if frame.latitude and frame.longitude:
+            if frame.latitude is not None and frame.longitude is not None:
                 gpx_content += f'''      <trkpt lat="{frame.latitude}" lon="{frame.longitude}">
         <ele>{frame.depth_meters if frame.depth_meters else 0}</ele>
         <extensions>
