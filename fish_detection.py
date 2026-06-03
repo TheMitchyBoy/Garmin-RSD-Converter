@@ -197,14 +197,12 @@ class FishDetector:
     
     @staticmethod
     def _get_size_color(size: str) -> str:
-        """Get color for fish size category"""
-        colors = {
-            'small': '#FFA500',    # Orange
-            'medium': '#FF6347',   # Tomato
-            'large': '#DC143C',    # Crimson
-            'school': '#8B0000',   # Dark Red
-        }
-        return colors.get(size, '#808080')  # Gray as default
+        """Get color for fish size category (aligned with map legend)."""
+        from map_visuals import FISH_SIZE_LEGEND
+        entry = FISH_SIZE_LEGEND.get(size)
+        if entry:
+            return entry['color']
+        return '#808080'
     
     @staticmethod
     def aggregate_fish_by_location(
