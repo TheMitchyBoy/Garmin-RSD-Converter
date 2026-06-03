@@ -159,13 +159,12 @@ def run_csv_analysis_pipeline(
         depth_hm = HeatmapGenerator.create_depth_heatmap(csv_file, grid_size=grid_size)
         temperature_hm = HeatmapGenerator.create_temperature_heatmap(csv_file, grid_size=grid_size)
         outputs.extend([intensity_hm, depth_hm, temperature_hm])
-        outputs.append(
-            WebVisualizer.create_seabed_3d_chart(
-                depth_hm,
-                location_name=label,
-                output_file=out_dir / f"seabed_3d_{slug}.html",
-            )
+        seabed_3d = WebVisualizer.create_seabed_3d_chart(
+            depth_hm,
+            location_name=label,
+            output_file=out_dir / f"seabed_3d_{slug}.html",
         )
+        outputs.append(seabed_3d)
 
         detections_file, detections = FishDetector.detect_fish(csv_file)
         outputs.append(detections_file)
@@ -184,6 +183,7 @@ def run_csv_analysis_pipeline(
                 metrics,
                 location_name=label,
                 depth_geojson_file=depth_hm,
+                seabed_3d_file=seabed_3d,
                 output_file=out_dir / f'fishing_dashboard_{slug}.html',
                 csv_file=csv_file,
                 grid_size=grid_size,

@@ -131,6 +131,7 @@ class TestMapGenerator(unittest.TestCase):
             location_name='Test Lake',
             output_file=self.temp_path / 'dashboard.html',
             depth_geojson_file=depth_file,
+            seabed_3d_file=seabed_3d,
         )
         seabed_content = seabed_3d.read_text(encoding='utf-8')
         content = dashboard_file.read_text(encoding='utf-8')
@@ -143,6 +144,8 @@ class TestMapGenerator(unittest.TestCase):
         self.assertIn('Seabed depth', content)
         self.assertIn('Fish detections', content)
         self.assertIn('layers.seabed', content)
+        self.assertIn('Open 3D seabed chart', content)
+        self.assertIn('seabed_3d_test_lake.html', content)
 
     def test_decode_garmin_coordinate_pair_handles_alaska_ranges(self):
         lat_raw = int(61.2181 * 10_000_000)

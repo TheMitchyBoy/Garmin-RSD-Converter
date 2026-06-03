@@ -315,18 +315,27 @@
     function renderResults(data) {
       let html = '<p><strong>Done:</strong> ' + data.succeeded + '/' + data.total + ' succeeded</p>';
       const dashboards = [];
+      const seabedCharts = [];
       if (data.dashboard_url) dashboards.push(data.dashboard_url);
+      if (data.seabed_3d_url) seabedCharts.push(data.seabed_3d_url);
       (data.results || []).forEach(r => {
         (r.artifacts || []).forEach(a => {
           if (a.type === 'dashboard' && dashboards.indexOf(a.url) < 0) dashboards.push(a.url);
+          if (a.type === 'seabed_3d' && seabedCharts.indexOf(a.url) < 0) seabedCharts.push(a.url);
         });
       });
       if (dashboards.length) {
         html += '<p><a class="dashboard-btn" href="' + dashboards[0] + '">Open analytics dashboard →</a></p>';
+        if (seabedCharts.length) {
+          html += '<p><a class="dashboard-btn" href="' + seabedCharts[0] + '" target="_blank" rel="noopener">Open 3D seabed chart →</a></p>';
+        }
         html += '<p style="color:var(--muted);font-size:0.85rem;">Redirecting shortly…</p>';
-      html += '<p><a href="' + (data.area_map_url || '/area-map') + '" style="color:var(--accent-hover)">View combined area map →</a></p>';
+        html += '<p><a href="' + (data.area_map_url || '/area-map') + '" style="color:var(--accent-hover)">View combined area map →</a></p>';
       } else {
         html += '<p style="color:var(--muted);">Select <strong>Full analysis</strong> for the interactive dashboard.</p>';
+        if (seabedCharts.length) {
+          html += '<p><a class="dashboard-btn" href="' + seabedCharts[0] + '" target="_blank" rel="noopener">Open 3D seabed chart →</a></p>';
+        }
       }
       (data.results || []).forEach(r => {
         const cls = r.success ? 'ok' : 'fail';
