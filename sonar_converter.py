@@ -12,6 +12,8 @@ from dataclasses import dataclass
 import logging
 from datetime import datetime
 
+from geo_utils import decode_garmin_coordinate_pair
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -152,11 +154,10 @@ class SonarRSDParser:
             try:
                 lat_raw = struct.unpack('<i', data[offset+4:offset+8])[0]
                 lon_raw = struct.unpack('<i', data[offset+8:offset+12])[0]
-                
-                # Check if values look like coordinates
-                if abs(lat_raw) < 100000000 and abs(lon_raw) < 100000000:
-                    frame.latitude = lat_raw / 10000000.0
-                    frame.longitude = lon_raw / 10000000.0
+                lat, lon = decode_garmin_coordinate_pair(lat_raw, lon_raw)
+                if lat is not None and lon is not None:
+                    frame.latitude = lat
+                    frame.longitude = lon
             except:
                 pass
             
