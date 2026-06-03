@@ -26,12 +26,12 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from area_map import build_area_map_geojson, load_echogram_segment
 from batch_processor import batch_process_uploads, format_batch_summary
-from survey_database import init_db, list_uploads, record_completed_upload, save_labels
+from survey_database import get_db_path, init_db, list_uploads, record_completed_upload, save_labels
 
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB per request
-APP_BUILD_ID = '2026.06.03-survey-db'
+APP_BUILD_ID = '2026.06.03-db-fix'
 # Hosted (Railway) web uploads: stream to disk; avoid loading huge bodies in RAM.
 WEB_UPLOAD_MAX_BYTES = 150 * 1024 * 1024  # 150 MB per request on public UI
 READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
