@@ -210,6 +210,81 @@ The CSV holds GPS track points, depth, and intensity statistics — one row per 
 
 ---
 
+## Web application (self-hosted)
+
+Run the full tool as a browser-based web app on your own server — upload RSD files, watch the sonar feed, convert to CSV, and run the analysis pipeline without using the command line.
+
+### Start locally
+
+```bash
+python sonar_cli.py serve
+# → open http://localhost:8080/
+```
+
+Bind to all interfaces (for LAN or VPS hosting):
+
+```bash
+python sonar_cli.py serve --host 0.0.0.0 --port 8080
+```
+
+The legacy `upload` command still works for local-only use on port 8765:
+
+```bash
+python sonar_cli.py upload
+```
+
+### What the web app includes
+
+| Tab | What it does |
+|-----|----------------|
+| **Watch sonar feed** | Upload one `.RSD` → interactive scrolling echogram (HTML player, no ffmpeg) |
+| **Convert & maps** | Upload one or many `.RSD` → CSV plus optional GeoJSON / all map exports |
+| **Full pipeline** | CSV, maps, heatmaps, fish detection, and HTML dashboard |
+
+Each job creates a session folder under `./data/sessions/` with downloadable outputs linked in the browser.
+
+### Docker deployment
+
+```bash
+docker compose up --build
+# → http://localhost:8080/
+```
+
+Session data persists in the `sonar-data` Docker volume.
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SONAR_HOST` | `0.0.0.0` | Bind address |
+| `SONAR_PORT` | `8080` | HTTP port |
+| `SONAR_DATA_DIR` | `./data` | Uploads and session outputs |
+| `SONAR_MAX_UPLOAD_BYTES` | `2147483648` | Max upload size (2 GB) |
+| `SONAR_BASE_PATH` | `` | URL prefix when served under a subpath |
+
+### Reverse proxy (nginx example)
+
+Put the app behind nginx on a domain with a longer timeout for large RSD files:
+
+```nginx
+server {
+    listen 80;
+    server_name sonar.example.com;
+
+    client_max_body_size 2G;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+}
+```
+
+Run the app as a systemd service or inside Docker on the same host.
+
+---
+
 ## Command reference
 
 | Command | Purpose |
@@ -229,7 +304,8 @@ The CSV holds GPS track points, depth, and intensity statistics — one row per 
 | `batch convert` | Bulk RSD → CSV (+ optional maps) |
 | `batch pipeline` | Bulk full analysis |
 | `batch list` | Preview files that would be processed |
-| `upload` | Local web UI on port 8765 |
+| `upload` | Local web UI on port 8765 (legacy alias) |
+| `serve` | Hostable web app — upload, playback, convert, pipeline |
 | `playback` | Live-style scrolling sonar video (MP4/GIF/HTML) from RSD |
 
 ### Common examples
@@ -318,6 +394,8 @@ Heatmap and contour outputs are GeoJSON polygon/line layers written alongside th
 ```
 pingverter_adapter.py   # RSD decode + CSV normalization (core)
 sonar_converter_streaming.py  # Thin CLI entry for conversion
+sonar_web_app.py        # Hostable web application (HTTP server + UI)
+sonar_upload_server.py  # Legacy wrapper for sonar_web_app
 sonar_playback.py       # Live-style scrolling sonar video/HTML playback
 sonar_cli.py            # Main command-line interface
 batch_processor.py      # Multi-file discovery and bulk runs
@@ -339,6 +417,7 @@ geo_utils.py            # Garmin coordinate decoding helpers
 test_converter.py       # Export and analysis unit tests
 test_pingverter_adapter.py  # PINGVerter adapter tests
 test_sonar_playback.py  # Sonar playback rendering tests
+test_web_app.py         # Web app path security and helpers
 test_batch_processor.py # Batch discovery tests
 ```
 
@@ -359,7 +438,7 @@ Run both before publishing maps or sharing dashboards from a new recording.
 ## Testing
 
 ```bash
-python -m unittest test_converter.py test_batch_processor.py test_pingverter_adapter.py test_sonar_playback.py
+python -m unittest test_converter.py test_batch_processor.py test_pingverter_adapter.py test_sonar_playback.py test_web_app.py
 ```
 
 ---

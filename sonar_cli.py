@@ -89,7 +89,10 @@ Examples:
   # Bulk full pipeline on multiple files
   python sonar_cli.py batch pipeline Sonar001.RSD Sonar002.RSD --location "Lake Survey"
 
-  # Web upload UI (drag-and-drop, multiple files)
+  # Hostable web application (upload, playback, convert, pipeline)
+  python sonar_cli.py serve --host 0.0.0.0 --port 8080
+
+  # Local-only upload UI (legacy alias)
   python sonar_cli.py upload
 
   # Live-style sonar playback video or HTML player
@@ -315,9 +318,30 @@ Examples:
     playback_cmd.add_argument('--no-hud', action='store_true', help='Hide telemetry overlay in video/GIF')
     playback_cmd.add_argument('--no-bottom-line', action='store_true', help='Hide bottom depth track line')
 
-    # Upload web UI
+    # Hostable web application
+    serve_cmd = subparsers.add_parser(
+        'serve', help='Run the hostable web app (upload, playback, convert, pipeline)',
+    )
+    serve_cmd.add_argument(
+        '--host', default=None,
+        help='Bind address (default: 0.0.0.0, or SONAR_HOST env)',
+    )
+    serve_cmd.add_argument(
+        '--port', type=int, default=None,
+        help='Port (default: 8080, or SONAR_PORT env)',
+    )
+    serve_cmd.add_argument(
+        '--data-dir', type=Path, default=None,
+        help='Data root for sessions (default: ./data, or SONAR_DATA_DIR env)',
+    )
+    serve_cmd.add_argument(
+        '--base-path', default=None,
+        help='URL prefix when behind a reverse proxy subpath',
+    )
+
+    # Upload web UI (legacy alias for local use)
     upload_cmd = subparsers.add_parser(
-        'upload', help='Start local web UI for drag-and-drop RSD upload',
+        'upload', help='Start local web UI (alias: serve on 127.0.0.1:8765)',
     )
     upload_cmd.add_argument('--host', default='127.0.0.1')
     upload_cmd.add_argument('--port', type=int, default=8765)
@@ -355,6 +379,8 @@ Examples:
             return cmd_compare(args)
         elif args.command == 'upload':
             return cmd_upload(args)
+        elif args.command == 'serve':
+            return cmd_serve(args)
         elif args.command == 'playback':
             return cmd_playback(args)
     except Exception as e:
@@ -831,15 +857,37 @@ def cmd_playback(args):
     return 0
 
 
-def cmd_upload(args):
-    """Start the local RSD upload web server."""
-    from sonar_upload_server import run_server
+def cmd_serve(args):
+    """Run the hostable sonar web application."""
+    from sonar_web_app import run_web_app
 
-    run_server(
+    run_web_app(
         host=args.host,
         port=args.port,
-        uploads_dir=args.uploads_dir,
-        output_dir=args.output_dir,
+        data_dir=args.data_dir,
+        base_path=args.base_path or '',
+    )
+    return 0
+
+
+def cmd_upload(args):
+    """Start the local RSD upload web server (legacy convenience wrapper)."""
+    from sonar_web_app import run_web_app
+
+    data_dir = Path('data')
+    if getattr(args, 'uploads_dir', None):
+        uploads_dir = Path(args.uploads_dir)
+        if uploads_dir.name == 'uploads':
+            data_dir = uploads_dir.parent
+    if getattr(args, 'output_dir', None):
+        output_dir = Path(args.output_dir)
+        if output_dir.name == 'output':
+            data_dir = output_dir.parent
+
+    run_web_app(
+        host=args.host,
+        port=args.port,
+        data_dir=data_dir,
     )
     return 0
 
