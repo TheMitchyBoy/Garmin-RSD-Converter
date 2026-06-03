@@ -6,7 +6,6 @@ All RSD decoding is delegated to PINGVerter via pingverter_adapter.
 """
 
 from pathlib import Path
-from typing import Optional, Tuple
 
 from pingverter_adapter import (
     convert_sonar_rsd_to_csv,
