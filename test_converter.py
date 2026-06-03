@@ -88,6 +88,11 @@ class TestMapGenerator(unittest.TestCase):
         self.assertIn('layer', depth_feature['properties'])
         self.assertEqual(depth_feature['properties']['layer'], 'seabed')
         self.assertRegex(depth_feature['properties']['color'], r'^#[0-9a-f]{6}$')
+        depth_props = depth_feature['properties']
+        self.assertIn('depth_band', depth_props)
+        self.assertEqual(depth_props['marker-color'], depth_props['color'])
+        self.assertEqual(depth_props['fill'], depth_props['color'])
+        self.assertEqual(depth_props['stroke'], '#08306b')
 
     def test_bathymetry_color_ramp(self):
         shallow = bathymetry_color(2.0, 2.0, 20.0)
@@ -107,6 +112,12 @@ class TestMapGenerator(unittest.TestCase):
         detections_file, detections = FishDetector.detect_fish(csv_file)
         self.assertTrue(detections_file.exists())
         self.assertGreaterEqual(len(detections), 1)
+        detections_data = json.loads(detections_file.read_text(encoding='utf-8'))
+        detection_props = detections_data['features'][0]['properties']
+        self.assertIn('marker-color', detection_props)
+        self.assertIn('marker-size', detection_props)
+        self.assertIn('marker-symbol', detection_props)
+        self.assertEqual(detection_props['marker-color'], detection_props['color'])
 
         metrics = PopulationHealthAnalytics.analyze_population_metrics(detections_file)
         self.assertIn('health_indicators', metrics)
@@ -126,6 +137,7 @@ class TestMapGenerator(unittest.TestCase):
         self.assertIn('Seabed depth', content)
         self.assertIn('Fish detections', content)
         self.assertIn('layers.seabed', content)
+        self.assertIn('marker size and opacity show confidence', content)
 
     def test_empty_heatmaps_do_not_crash(self):
         csv_file = self.temp_path / 'empty.csv'

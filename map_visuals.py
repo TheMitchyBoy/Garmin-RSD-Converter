@@ -9,12 +9,32 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
-# Fish size categories -> display color and label
+# Fish size categories -> display color, label, and map marker hints
 FISH_SIZE_LEGEND: Dict[str, Dict[str, str]] = {
-    "small": {"color": "#f59e0b", "label": "Small"},
-    "medium": {"color": "#f97316", "label": "Medium"},
-    "large": {"color": "#dc2626", "label": "Large"},
-    "school": {"color": "#7f1d1d", "label": "School / high intensity"},
+    "small": {
+        "color": "#22c55e",
+        "label": "Small",
+        "marker_size": "small",
+        "marker_symbol": "circle",
+    },
+    "medium": {
+        "color": "#f59e0b",
+        "label": "Medium",
+        "marker_size": "medium",
+        "marker_symbol": "circle",
+    },
+    "large": {
+        "color": "#ef4444",
+        "label": "Large",
+        "marker_size": "large",
+        "marker_symbol": "circle",
+    },
+    "school": {
+        "color": "#7c3aed",
+        "label": "School / high intensity",
+        "marker_size": "large",
+        "marker_symbol": "star",
+    },
 }
 
 
@@ -47,6 +67,22 @@ def bathymetry_color(depth_m: float, min_depth: float, max_depth: float) -> str:
             return f"#{r:02x}{g:02x}{b:02x}"
     r, g, b = stops[-1][1]
     return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def depth_band(depth_m: float, min_depth: float, max_depth: float) -> str:
+    """Classify a depth value into a legend-friendly bathymetry band."""
+    if max_depth <= min_depth:
+        t = 0.5
+    else:
+        t = (depth_m - min_depth) / (max_depth - min_depth)
+    t = max(0.0, min(1.0, t))
+    if t < 0.25:
+        return "shallow"
+    if t < 0.60:
+        return "mid-depth"
+    if t < 0.85:
+        return "deep"
+    return "deepest"
 
 
 def intensity_color(intensity: float, min_val: float, max_val: float) -> str:

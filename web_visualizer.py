@@ -125,6 +125,7 @@ class WebVisualizer:
     .label {{ color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }}
     .value {{ font-size: 28px; font-weight: 700; margin-top: 6px; }}
     h2 {{ margin-top: 0; }}
+    .map-note {{ margin-bottom: 14px; }}
     #map {{
       width: 100%;
       height: 520px;
@@ -205,7 +206,7 @@ class WebVisualizer:
 
     <section class="card map-section">
       <h2>Survey Map</h2>
-      <p class="muted">Toggle layers: seabed depth (bathymetry) under fish detection markers. Basemap requires network.</p>
+      <p class="muted map-note">Toggle layers: seabed depth (bathymetry) under fish detection markers. Color shows fish size class; marker size and opacity show confidence. Basemap requires network.</p>
       <div id="map" role="img" aria-label="Seabed and fish detection map"></div>
       <div class="legends">
         {depth_legend_html if has_seabed else '<div class="legend muted"><h3>Seabed</h3><p>No bathymetry layer — pass <code>--depth-heatmap</code> or run heatmap first.</p></div>'}
@@ -291,7 +292,7 @@ class WebVisualizer:
           color: '#1e293b',
           weight: 1.5,
           opacity: 0.95,
-          fillOpacity: 0.88
+          fillOpacity: Math.max(0.45, Math.min(confidence, 1) * 0.45 + 0.45)
         }});
       }},
       onEachFeature: (feature, layer) => {{
@@ -408,6 +409,11 @@ class WebVisualizer:
                 f'<span class="swatch swatch-round" style="background:{color}"></span>'
                 f'<span>{html.escape(label)}</span></div>'
             )
+        items.append(
+            '<div class="legend-item muted">'
+            '<span class="swatch swatch-round" style="background:#94a3b8; opacity:0.55"></span>'
+            '<span>Marker size and opacity show confidence</span></div>'
+        )
         return f'<div class="legend"><h3>Fish detections</h3>{"".join(items)}</div>'
 
     @staticmethod

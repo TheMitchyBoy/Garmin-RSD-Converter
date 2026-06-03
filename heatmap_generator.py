@@ -14,6 +14,7 @@ from collections import defaultdict
 
 from map_visuals import (
     bathymetry_color,
+    depth_band,
     grid_cell_polygon,
     grid_center,
     grid_key,
@@ -151,7 +152,7 @@ class HeatmapGenerator:
                         cell_lat, cell_lon = grid_center(key, grid_size)
                         grid[key] = GridCell(cell_lat, cell_lon)
                     grid[key].add_reading(intensity, depth, temp)
-            
+
             features = []
             intensities = [cell.get_stats()['intensity_avg'] for cell in grid.values() if cell.get_stats()]
             
@@ -259,16 +260,16 @@ class HeatmapGenerator:
                 for cell in grid.values()
                 if cell.get_stats() and cell.get_stats().get('depth_avg') is not None
             ]
-            
+
             if depths:
                 min_depth = min(depths)
                 max_depth = max(depths)
-                
+
                 for cell in grid.values():
                     stats = cell.get_stats()
                     if not stats or stats.get('depth_avg') is None:
                         continue
-                    
+
                     depth_avg = stats['depth_avg']
                     color = bathymetry_color(depth_avg, min_depth, max_depth)
                     props = {
@@ -278,7 +279,14 @@ class HeatmapGenerator:
                         'depth_max': round(stats['depth_max'], 2) if stats.get('depth_max') else None,
                         'point_count': stats['point_count'],
                         'color': color,
+                        'fill': color,
+                        'marker-color': color,
+                        'marker-size': 'small',
                         'fill_opacity': 0.78,
+                        'fill-opacity': 0.78,
+                        'stroke': '#08306b',
+                        'stroke-width': 1,
+                        'depth_band': depth_band(depth_avg, min_depth, max_depth),
                     }
                     if use_polygons:
                         features.append(HeatmapGenerator._polygon_feature(
@@ -293,7 +301,7 @@ class HeatmapGenerator:
                             },
                             'properties': props,
                         })
-            
+
             geojson = {
                 'type': 'FeatureCollection',
                 'properties': {
@@ -304,23 +312,23 @@ class HeatmapGenerator:
                 },
                 'features': features,
             }
-            
+
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(geojson, f, indent=2)
-            
+
             logger.info(f"Generated depth heatmap: {output_file}")
             if depths:
                 logger.info(f"  Grid cells: {len(features)}")
                 logger.info(f"  Depth range: {min(depths):.2f}m - {max(depths):.2f}m")
             else:
                 logger.info("  No valid depth readings found")
-            
+
             return output_file
-        
+
         except Exception as e:
             logger.error(f"Error creating depth heatmap: {e}")
             raise
-    
+
     @staticmethod
     def create_temperature_heatmap(
         csv_file: Path,
@@ -331,11 +339,11 @@ class HeatmapGenerator:
         """Create a gridded heatmap of water temperature variations."""
         if output_file is None:
             output_file = csv_file.with_name(f"{csv_file.stem}_temperature_heatmap.geojson")
-        
+
         logger.info(f"Generating temperature heatmap with grid size {grid_size}°...")
-        
+
         grid: Dict[Tuple[int, int], GridCell] = {}
-        
+
         try:
             with open(csv_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
@@ -352,23 +360,23 @@ class HeatmapGenerator:
                         cell_lat, cell_lon = grid_center(key, grid_size)
                         grid[key] = GridCell(cell_lat, cell_lon)
                     grid[key].add_reading(intensity, depth, temp)
-            
+
             features = []
             temps = [
                 cell.get_stats()['temp_avg']
                 for cell in grid.values()
                 if cell.get_stats() and cell.get_stats().get('temp_avg') is not None
             ]
-            
+
             if temps:
                 min_temp = min(temps)
                 max_temp = max(temps)
-                
+
                 for cell in grid.values():
                     stats = cell.get_stats()
                     if not stats or stats.get('temp_avg') is None:
                         continue
-                    
+
                     temp_avg = stats['temp_avg']
                     color = intensity_color(temp_avg, min_temp, max_temp)
                     props = {

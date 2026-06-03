@@ -8,9 +8,9 @@ Convert Garmin Sonar .RSD data into CSV, map exports, heatmaps, dashboards, and 
 - Analyze sonar survey data
 - Export sonar data to 3D point clouds (`PLY`)
 - Generate GeoJSON, KML, and GPX from sonar GPS tracks
-- Generate sonar intensity, depth, and temperature heatmaps
-- Detect fish signatures and generate population health reports
-- Build a self-contained HTML dashboard from fish detections
+- Generate styled sonar intensity, depth, and temperature heatmaps
+- Detect fish signatures and generate styled GeoJSON plus population health reports
+- Build a self-contained HTML dashboard from fish detections with offline map visuals
 - CLI for batch processing and fast streaming conversion
 
 ## Installation
@@ -91,7 +91,7 @@ The mapping exports convert sonar CSV rows into portable spatial formats:
 
 - `PLY` uses GPS coordinates projected into a local ENU plane with depth encoded as the Z axis.
 - `GeoJSON`, `KML`, and `GPX` preserve the GPS track for web maps, Google Earth, and GPS software.
-- Heatmap GeoJSON files aggregate intensity, depth, and temperature values for visualization.
+- Heatmap GeoJSON files aggregate intensity, depth, and temperature values and include map styling properties for visualization.
 
 ## CLI
 
