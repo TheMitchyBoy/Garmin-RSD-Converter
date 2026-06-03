@@ -114,6 +114,7 @@ class WebVisualizer:
         track_geo = {"type": "FeatureCollection", "features": []}
         echogram_pings: List[Dict[str, Any]] = []
         csv_name = csv_path.name if csv_path.is_file() else detections_file.name
+        upload_id = csv_path.parent.name if csv_path.is_file() else ""
         if csv_path.is_file():
             track_payload = load_csv_track_geojson(csv_path)
             track_geo = {
@@ -138,6 +139,7 @@ class WebVisualizer:
             .replace("__ECHOGRAM_PINGS__", json.dumps(echogram_pings))
             .replace("__SURVEY_TITLE_JSON__", json.dumps(location_name))
             .replace("__CSV_NAME_JSON__", json.dumps(csv_name))
+            .replace("__UPLOAD_ID_JSON__", json.dumps(upload_id))
             .replace("__HAS_SEABED__", str(has_seabed).lower())
         )
 

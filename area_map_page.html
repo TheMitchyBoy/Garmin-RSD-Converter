@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Area map · Sonar Survey</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <style>
+    :root { --font: "DM Sans", system-ui, sans-serif; --accent: #0d9488; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: var(--font); background: #f1f5f9; color: #0f172a; }
+    .top { background: linear-gradient(135deg, #0f766e, #0891b2); color: #fff; padding: 1rem 1.25rem; }
+    .top h1 { margin: 0; font-size: 1.25rem; }
+    .top p { margin: 0.3rem 0 0; font-size: 0.85rem; opacity: 0.9; }
+    .top a { color: #ccfbf1; }
+    .layout { display: grid; grid-template-columns: 280px 1fr; height: calc(100vh - 72px); }
+    @media (max-width: 800px) { .layout { grid-template-columns: 1fr; height: auto; } }
+    .sidebar { background: #fff; border-right: 1px solid #e2e8f0; overflow-y: auto; padding: 1rem; }
+    #areaMap { height: 100%; min-height: 400px; }
+    @media (max-width: 800px) { #areaMap { height: 55vh; } }
+    .survey-item {
+      padding: 0.65rem; border: 1px solid #e2e8f0; border-radius: 10px;
+      margin-bottom: 0.5rem; font-size: 0.82rem; cursor: pointer;
+    }
+    .survey-item:hover { border-color: var(--accent); background: #f0fdfa; }
+    .muted { color: #64748b; font-size: 0.75rem; }
+    .legend { margin-top: 1rem; font-size: 0.8rem; }
+    .legend span { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <h1>Combined area map</h1>
+    <p>All saved surveys · <a href="/">← Upload</a></p>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="muted" id="surveyCount">Loading surveys…</p>
+      <div id="surveyList"></div>
+      <div class="legend">
+        <p><span style="background:#eab308"></span> GPS routes</p>
+        <p><span style="background:#f59e0b;border-radius:50%"></span> Auto fish</p>
+        <p><span style="background:#22c55e;border-radius:50%"></span> Your labels</p>
+      </div>
+    </aside>
+    <div id="areaMap"></div>
+  </div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
+    const map = L.map('areaMap');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+    async function load() {
+      const [surveysRes, mapRes] = await Promise.all([
+        fetch('/api/surveys'),
+        fetch('/api/area-map'),
+      ]);
+      const surveys = await surveysRes.json();
+      const area = await mapRes.json();
+      document.getElementById('surveyCount').textContent =
+        (surveys.surveys || []).length + ' saved survey(s)';
+      const list = document.getElementById('surveyList');
+      list.innerHTML = (surveys.surveys || []).map(s =>
+        '<div class="survey-item" data-id="' + s.id + '">' +
+        '<strong>' + (s.survey_name || s.id) + '</strong><br>' +
+        '<span class="muted">' + (s.row_count || 0) + ' pings · ' + (s.fish_count || 0) + ' fish</span></div>'
+      ).join('') || '<p class="muted">No surveys yet. Upload and run Full analysis.</p>';
+
+      const layers = { tracks: L.layerGroup(), fish: L.layerGroup(), labeled: L.layerGroup() };
+      L.geoJSON(area, {
+        pointToLayer: (f, ll) => {
+          const layer = f.properties?.layer;
+          if (layer === 'fish_labeled') {
+            return L.circleMarker(ll, { radius: 7, fillColor: '#22c55e', color: '#fff', weight: 2, fillOpacity: 0.95 });
+          }
+          const p = f.properties || {};
+          const r = { small: 4, medium: 6, large: 8, school: 10 }[p.size] || 5;
+          return L.circleMarker(ll, { radius: r, fillColor: p.color || '#f59e0b', color: '#fff', weight: 1.5, fillOpacity: 0.9 });
+        },
+        style: (f) => {
+          if (f.geometry?.type === 'LineString') {
+            return { color: '#eab308', weight: 3, opacity: 0.9 };
+          }
+          return {};
+        },
+        onEachFeature: (f, layer) => {
+          const p = f.properties || {};
+          const layerType = p.layer || '';
+          if (layerType === 'track') layers.tracks.addLayer(layer);
+          else if (layerType === 'fish_labeled') layers.labeled.addLayer(layer);
+          else layers.fish.addLayer(layer);
+          const title = p.species || p.size || p.survey_name || 'Survey';
+          layer.bindPopup('<strong>' + title + '</strong>' + (p.survey_name ? '<br>' + p.survey_name : ''));
+        },
+      });
+
+      layers.tracks.addTo(map);
+      layers.fish.addTo(map);
+      layers.labeled.addTo(map);
+      L.control.layers(null, {
+        'Survey routes': layers.tracks,
+        'Fish (auto)': layers.fish,
+        'Your labels': layers.labeled,
+      }, { collapsed: false }).addTo(map);
+
+      try {
+        const b = L.geoJSON(area).getBounds();
+        if (b.isValid()) map.fitBounds(b, { padding: [40, 40] });
+        else map.setView([61.2, -149.9], 8);
+      } catch (e) { map.setView([61.2, -149.9], 8); }
+
+      list.querySelectorAll('.survey-item').forEach(el => {
+        el.addEventListener('click', () => {
+          const id = el.getAttribute('data-id');
+          const s = (surveys.surveys || []).find(x => x.id === id);
+          if (s && s.min_lat != null) {
+            map.fitBounds([[s.min_lat, s.min_lon], [s.max_lat, s.max_lon]], { padding: [60, 60] });
+          }
+        });
+      });
+    }
+    load().catch(err => {
+      document.getElementById('surveyCount').textContent = 'Error: ' + err.message;
+    });
+  </script>
+</body>
+</html>

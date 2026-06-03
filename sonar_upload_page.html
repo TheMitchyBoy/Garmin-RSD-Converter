@@ -225,7 +225,7 @@
     </div>
 
     <div id="status" class="status-panel" role="status" aria-live="polite"></div>
-    <p class="footer">Build __BUILD__ · RSD &amp; CSV</p>
+    <p class="footer">Build __BUILD__ · <a href="/area-map" style="color:var(--accent-hover)">Area map</a> · RSD &amp; CSV</p>
   </div>
   <script>
     const dropzone = document.getElementById('dropzone');
@@ -320,6 +320,7 @@
       if (dashboards.length) {
         html += '<p><a class="dashboard-btn" href="' + dashboards[0] + '">Open analytics dashboard →</a></p>';
         html += '<p style="color:var(--muted);font-size:0.85rem;">Redirecting shortly…</p>';
+      html += '<p><a href="' + (data.area_map_url || '/area-map') + '" style="color:var(--accent-hover)">View combined area map →</a></p>';
       } else {
         html += '<p style="color:var(--muted);">Select <strong>Full analysis</strong> for the interactive dashboard.</p>';
       }

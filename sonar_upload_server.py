@@ -24,12 +24,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+from area_map import build_area_map_geojson, load_echogram_segment
 from batch_processor import batch_process_uploads, format_batch_summary
+from survey_database import init_db, list_uploads, record_completed_upload, save_labels
 
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB per request
-APP_BUILD_ID = '2026.06.03-map-labels'
+APP_BUILD_ID = '2026.06.03-survey-db'
 # Hosted (Railway) web uploads: stream to disk; avoid loading huge bodies in RAM.
 WEB_UPLOAD_MAX_BYTES = 150 * 1024 * 1024  # 150 MB per request on public UI
 READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
@@ -158,6 +160,7 @@ def _run_processing_job(
     nchunk: int,
     map_formats: Optional[List[str]],
     location: Optional[str],
+    output_root: Path,
     jobs: Dict[str, ProcessingJob],
     jobs_lock: threading.Lock,
 ) -> None:
@@ -178,11 +181,28 @@ def _run_processing_job(
         )
         payload = _summary_to_payload(summary, session_dir)
         logger.info(format_batch_summary(summary))
+        survey_name = location or session_dir.name
+        if summary.results:
+            survey_name = summary.results[0].input_path.stem
+        try:
+            record_completed_upload(
+                session_id=session_dir.name,
+                job_id=job_id,
+                survey_name=survey_name,
+                location=location,
+                workflow=workflow,
+                session_dir=session_dir,
+                result_payload=payload,
+                output_root=output_root,
+            )
+        except Exception:
+            logger.exception('Failed to persist upload to database')
         with jobs_lock:
             job = jobs.get(job_id)
             if job:
                 job.status = JobStatus.COMPLETED
                 job.result = payload
+                payload['area_map_url'] = '/area-map' 
     except Exception as exc:
         logger.exception('Batch processing failed for job %s', job_id)
         with jobs_lock:
@@ -383,7 +403,7 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
                 'build': APP_BUILD_ID,
                 'server': self.server_version,
                 'accepts': ['.rsd', '.csv'],
-                'features': ['async_jobs', 'csv_analysis', 'streaming_upload', 'results_download'],
+                'features': ['async_jobs', 'csv_analysis', 'streaming_upload', 'results_download', 'survey_database', 'area_map'],
             })
             return
         if parsed.path.startswith('/api/jobs/'):
@@ -407,16 +427,57 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
                 body['result'] = job.result
             self._send_json(body)
             return
+        if parsed.path == '/area-map':
+            page = Path(__file__).with_name('area_map_page.html')
+            self._send_html(page.read_text(encoding='utf-8'))
+            return
+        if parsed.path == '/api/surveys':
+            self._send_json({'surveys': list_uploads()})
+            return
+        if parsed.path == '/api/area-map':
+            self._send_json(build_area_map_geojson(self.output_root))
+            return
+        if parsed.path.startswith('/api/surveys/') and parsed.path.endswith('/echogram'):
+            upload_id = parsed.path[len('/api/surveys/'): -len('/echogram')].strip('/')
+            qs = parse_qs(parsed.query)
+            start = int((qs.get('start') or ['0'])[0])
+            limit = int((qs.get('limit') or ['1500'])[0])
+            self._send_json(load_echogram_segment(self.output_root, upload_id, start, limit))
+            return
         self._send_json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
 
-    def do_POST(self) -> None:
-        if urlparse(self.path).path != '/api/process':
-            self._send_json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
-            return
+    def _read_json_body(self) -> Dict[str, Any]:
+        length = int(self.headers.get('Content-Length', 0))
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length)
+        return json.loads(raw.decode('utf-8'))
+
+    def _handle_save_labels(self) -> None:
         try:
-            self._handle_process_upload()
+            data = self._read_json_body()
+        except json.JSONDecodeError:
+            self._send_json({'error': 'Invalid JSON'}, HTTPStatus.BAD_REQUEST)
+            return
+        upload_id = data.get('upload_id')
+        labels = data.get('labels') or []
+        if not upload_id:
+            self._send_json({'error': 'upload_id required'}, HTTPStatus.BAD_REQUEST)
+            return
+        count = save_labels(upload_id, labels)
+        self._send_json({'saved': count, 'upload_id': upload_id})
+
+    def do_POST(self) -> None:
+        path = urlparse(self.path).path
+        try:
+            if path == '/api/process':
+                self._handle_process_upload()
+            elif path == '/api/labels':
+                self._handle_save_labels()
+            else:
+                self._send_json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
         except Exception as exc:
-            logger.exception('Unhandled error in POST /api/process')
+            logger.exception('Unhandled error in POST %s', path)
             self._send_json({'error': str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def handle_one_request(self) -> None:
@@ -494,6 +555,7 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
                 'nchunk': nchunk,
                 'map_formats': map_formats,
                 'location': location,
+                'output_root': self.output_root,
                 'jobs': self.jobs,
                 'jobs_lock': self.jobs_lock,
             },
@@ -633,6 +695,9 @@ def run_server(
     SonarUploadHandler.output_root = output_root
     SonarUploadHandler.jobs = {}
     SonarUploadHandler.jobs_lock = threading.Lock()
+
+    init_db()
+    logger.info('Survey database: %s', get_db_path())
 
     server = ThreadingHTTPServer((host, port), SonarUploadHandler)
     url = f'http://{host}:{port}/'
