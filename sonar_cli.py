@@ -58,6 +58,10 @@ Examples:
     # Analyze command
     analyze_cmd = subparsers.add_parser('analyze', help='Analyze CSV file')
     analyze_cmd.add_argument('input', help='Input CSV file')
+    analyze_cmd.add_argument('--json', dest='json_output', nargs='?', const='-',
+                             metavar='PATH',
+                             help='Emit summary as JSON. Use "-" or omit a value '
+                                  'to write to stdout instead of a file.')
 
     # Heatmap command
     heatmap_cmd = subparsers.add_parser('heatmap', help='Generate heatmaps from CSV')
@@ -171,80 +175,129 @@ def cmd_convert(args):
     return 0
 
 
-def cmd_analyze(args):
-    """Execute analyze command"""
-    csv_file = Path(args.input)
-    
-    if not csv_file.exists():
-        logger.error(f"File not found: {csv_file}")
-        return 1
-    
-    logger.info(f"Analyzing {csv_file}...")
-    
-    # Analyze CSV
+def _compute_analysis_summary(csv_file: Path) -> dict:
+    """Read a sonar CSV and return summary statistics as a serializable dict."""
     depths = []
     temps = []
     frequencies = []
     lats = []
     lons = []
     total_rows = 0
-    
+
+    with open(csv_file, encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            total_rows += 1
+            try:
+                if row.get('depth_m'):
+                    depths.append(float(row['depth_m']))
+                if row.get('water_temp_c'):
+                    temps.append(float(row['water_temp_c']))
+                if row.get('sonar_frequency_khz'):
+                    frequencies.append(float(row['sonar_frequency_khz']))
+                if row.get('latitude'):
+                    lats.append(float(row['latitude']))
+                if row.get('longitude'):
+                    lons.append(float(row['longitude']))
+            except (ValueError, TypeError):
+                continue
+
+    def _stats(values):
+        if not values:
+            return {'count': 0}
+        return {
+            'count': len(values),
+            'min': min(values),
+            'max': max(values),
+            'avg': sum(values) / len(values),
+            'median': sorted(values)[len(values) // 2],
+        }
+
+    freq_stats = _stats(frequencies)
+    if frequencies:
+        freq_stats['unique_values'] = len(set(round(f) for f in frequencies))
+
+    return {
+        'file': str(csv_file),
+        'file_size_bytes': csv_file.stat().st_size,
+        'total_frames': total_rows,
+        'depth_m': _stats(depths),
+        'water_temp_c': _stats(temps),
+        'sonar_frequency_khz': freq_stats,
+        'latitude': _stats(lats),
+        'longitude': _stats(lons),
+    }
+
+
+def _print_analysis_summary(summary: dict) -> None:
+    file_size_mb = summary['file_size_bytes'] / 1024 / 1024
+    print("\n=== Sonar Survey Analysis ===")
+    print(f"Total Frames: {summary['total_frames']:,}")
+    print(f"File Size: {file_size_mb:.1f} MB")
+
+    depth = summary['depth_m']
+    print("\nDepth Data:")
+    print(f"  Records: {depth['count']:,}")
+    if depth['count']:
+        print(f"  Range: {depth['min']:.1f}m - {depth['max']:.1f}m")
+        print(f"  Average: {depth['avg']:.1f}m")
+        print(f"  Median: {depth['median']:.1f}m")
+
+    temp = summary['water_temp_c']
+    print("\nWater Temperature:")
+    print(f"  Records: {temp['count']:,}")
+    if temp['count']:
+        print(f"  Range: {temp['min']:.1f}°C - {temp['max']:.1f}°C")
+        print(f"  Average: {temp['avg']:.1f}°C")
+
+    freq = summary['sonar_frequency_khz']
+    print("\nSonar Frequency:")
+    print(f"  Records: {freq['count']:,}")
+    if freq['count']:
+        print(f"  Unique values: {freq.get('unique_values', 0)}")
+        print(f"  Range: {freq['min']:.0f} - {freq['max']:.0f} kHz")
+
+    lats = summary['latitude']
+    lons = summary['longitude']
+    print("\nGPS Coverage:")
+    print(f"  Latitude records: {lats['count']:,}")
+    print(f"  Longitude records: {lons['count']:,}")
+    if lats['count']:
+        print(f"  Lat range: {lats['min']:.6f} - {lats['max']:.6f}")
+    if lons['count']:
+        print(f"  Lon range: {lons['min']:.6f} - {lons['max']:.6f}")
+
+
+def cmd_analyze(args):
+    """Execute analyze command"""
+    import json
+
+    csv_file = Path(args.input)
+
+    if not csv_file.exists():
+        logger.error(f"File not found: {csv_file}")
+        return 1
+
+    logger.info(f"Analyzing {csv_file}...")
+
     try:
-        with open(csv_file) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                total_rows += 1
-                
-                try:
-                    if row.get('depth_m') and row['depth_m'] != '':
-                        depths.append(float(row['depth_m']))
-                    if row.get('water_temp_c') and row['water_temp_c'] != '':
-                        temps.append(float(row['water_temp_c']))
-                    if row.get('sonar_frequency_khz') and row['sonar_frequency_khz'] != '':
-                        frequencies.append(float(row['sonar_frequency_khz']))
-                    if row.get('latitude') and row['latitude'] != '':
-                        lats.append(float(row['latitude']))
-                    if row.get('longitude') and row['longitude'] != '':
-                        lons.append(float(row['longitude']))
-                except (ValueError, TypeError):
-                    continue
-        
-        print("\n=== Sonar Survey Analysis ===")
-        print(f"Total Frames: {total_rows:,}")
-        print(f"File Size: {csv_file.stat().st_size / 1024 / 1024:.1f} MB")
-        
-        print(f"\nDepth Data:")
-        print(f"  Records: {len(depths):,}")
-        if depths:
-            print(f"  Range: {min(depths):.1f}m - {max(depths):.1f}m")
-            print(f"  Average: {sum(depths)/len(depths):.1f}m")
-            print(f"  Median: {sorted(depths)[len(depths)//2]:.1f}m")
-        
-        print(f"\nWater Temperature:")
-        print(f"  Records: {len(temps):,}")
-        if temps:
-            print(f"  Range: {min(temps):.1f}°C - {max(temps):.1f}°C")
-            print(f"  Average: {sum(temps)/len(temps):.1f}°C")
-        
-        print(f"\nSonar Frequency:")
-        print(f"  Records: {len(frequencies):,}")
-        if frequencies:
-            freq_set = set(round(f) for f in frequencies)
-            print(f"  Unique values: {len(freq_set)}")
-            print(f"  Range: {min(frequencies):.0f} - {max(frequencies):.0f} kHz")
-        
-        print(f"\nGPS Coverage:")
-        print(f"  Latitude records: {len(lats):,}")
-        print(f"  Longitude records: {len(lons):,}")
-        if lats:
-            print(f"  Lat range: {min(lats):.6f} - {max(lats):.6f}")
-        if lons:
-            print(f"  Lon range: {min(lons):.6f} - {max(lons):.6f}")
-        
+        summary = _compute_analysis_summary(csv_file)
     except Exception as e:
         logger.error(f"Error analyzing CSV: {e}")
         return 1
-    
+
+    json_target = getattr(args, 'json_output', None)
+    if json_target is None:
+        _print_analysis_summary(summary)
+        return 0
+
+    payload = json.dumps(summary, indent=2)
+    if json_target == '-':
+        print(payload)
+    else:
+        Path(json_target).write_text(payload + '\n', encoding='utf-8')
+        print(f"✓ JSON summary written to {json_target}")
+
     return 0
 
 
