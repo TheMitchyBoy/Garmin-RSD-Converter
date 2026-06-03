@@ -142,6 +142,8 @@ def run_csv_analysis_pipeline(
 ) -> List[Path]:
     """Run map / heatmap / fish analysis on an existing project CSV."""
     label = _location_label(csv_file, location)
+    out_dir = csv_file.parent
+    slug = WebVisualizer._slugify(label)
     outputs: List[Path] = [csv_file]
 
     if full_pipeline:
@@ -161,7 +163,11 @@ def run_csv_analysis_pipeline(
 
         metrics = PopulationHealthAnalytics.analyze_population_metrics(detections_file)
         outputs.append(
-            PopulationHealthAnalytics.generate_public_report(metrics, location_name=label)
+            PopulationHealthAnalytics.generate_public_report(
+                metrics,
+                location_name=label,
+                output_file=out_dir / f'fishing_health_report_{slug}.md',
+            )
         )
         outputs.append(
             WebVisualizer.create_dashboard(
@@ -169,6 +175,7 @@ def run_csv_analysis_pipeline(
                 metrics,
                 location_name=label,
                 depth_geojson_file=depth_hm,
+                output_file=out_dir / f'fishing_dashboard_{slug}.html',
             )
         )
     elif map_formats:

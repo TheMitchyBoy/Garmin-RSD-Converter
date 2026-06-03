@@ -11,6 +11,7 @@ import argparse
 import os
 import json
 import logging
+import mimetypes
 import sys
 import threading
 import time
@@ -21,14 +22,14 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from batch_processor import batch_process_uploads, format_batch_summary
 
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB per request
-APP_BUILD_ID = '2026.06.03-upload-progress'
+APP_BUILD_ID = '2026.06.03-analytics'
 # Hosted (Railway) web uploads: stream to disk; avoid loading huge bodies in RAM.
 WEB_UPLOAD_MAX_BYTES = 150 * 1024 * 1024  # 150 MB per request on public UI
 READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
@@ -55,22 +56,89 @@ class ProcessingJob:
     file_count: int = 0
 
 
+RESULTS_ALLOWED_SUFFIXES = frozenset({
+    '.html', '.htm', '.csv', '.geojson', '.json', '.kml', '.gpx', '.ply',
+    '.png', '.jpg', '.jpeg', '.tif', '.tiff', '.las', '.txt', '.md',
+})
+
+
+def _relative_output_path(session_dir: Path, artifact: Path) -> str:
+    resolved = artifact.resolve()
+    base = session_dir.resolve()
+    try:
+        return resolved.relative_to(base).as_posix()
+    except ValueError:
+        return artifact.name
+
+
+def _classify_output_artifact(artifact: Path) -> Dict[str, str]:
+    name = artifact.name.lower()
+    if name.endswith('.html') and 'dashboard' in name:
+        return {'type': 'dashboard', 'label': 'Analytics dashboard'}
+    if name.endswith('_fish_detections.geojson'):
+        return {'type': 'geojson', 'label': 'Fish detections (GeoJSON)'}
+    if name.endswith('.geojson'):
+        return {'type': 'geojson', 'label': 'Map layer (GeoJSON)'}
+    if name.endswith('.kml'):
+        return {'type': 'kml', 'label': 'KML map'}
+    if name.endswith('.csv'):
+        return {'type': 'csv', 'label': 'Sonar CSV'}
+    if name.endswith('.png') or name.endswith('.jpg') or name.endswith('.jpeg'):
+        return {'type': 'image', 'label': artifact.name}
+    return {'type': 'file', 'label': artifact.name}
+
+
+def _build_artifacts(session_dir: Path, item) -> List[Dict[str, str]]:
+    session_id = session_dir.name
+    artifacts: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for output_path in getattr(item, 'outputs', []) or []:
+        path = Path(output_path)
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in RESULTS_ALLOWED_SUFFIXES:
+            continue
+        rel = _relative_output_path(session_dir, path)
+        if rel in seen:
+            continue
+        seen.add(rel)
+        info = _classify_output_artifact(path)
+        artifacts.append({
+            'type': info['type'],
+            'label': info['label'],
+            'path': rel,
+            'url': f'/results/{session_id}/{quote(rel, safe="/")}',
+        })
+    return artifacts
+
+
 def _summary_to_payload(summary, session_dir: Path) -> Dict[str, Any]:
-    return {
+    session_id = session_dir.name
+    results = []
+    dashboard_urls: List[str] = []
+    for item in summary.results:
+        artifacts = _build_artifacts(session_dir, item)
+        for artifact in artifacts:
+            if artifact['type'] == 'dashboard':
+                dashboard_urls.append(artifact['url'])
+        results.append({
+            'name': item.input_path.name,
+            'success': item.success,
+            'message': item.message,
+            'csv': str(item.csv_path) if item.csv_path else None,
+            'artifacts': artifacts,
+        })
+    payload: Dict[str, Any] = {
         'total': summary.total,
         'succeeded': summary.succeeded,
         'failed': summary.failed,
+        'session_id': session_id,
         'output_dir': str(session_dir.resolve()),
-        'results': [
-            {
-                'name': item.input_path.name,
-                'success': item.success,
-                'message': item.message,
-                'csv': str(item.csv_path) if item.csv_path else None,
-            }
-            for item in summary.results
-        ],
+        'results': results,
     }
+    if dashboard_urls:
+        payload['dashboard_url'] = dashboard_urls[0]
+    return payload
 
 
 def _prune_old_jobs(jobs: Dict[str, ProcessingJob]) -> None:
@@ -293,6 +361,24 @@ def _upload_page_html(port: int) -> str:
     .result-item {{ margin: 0.35rem 0; }}
     .ok {{ color: var(--ok); }}
     .fail {{ color: var(--err); }}
+    .dashboard-btn {{
+      display: inline-block;
+      margin: 1rem 0 0.5rem;
+      padding: 0.85rem 1.25rem;
+      font-size: 1rem;
+      font-weight: 600;
+      border-radius: 10px;
+      background: var(--ok);
+      color: #052e16;
+      text-decoration: none;
+    }}
+    .dashboard-btn:hover {{ filter: brightness(1.05); }}
+    .artifact-links {{ margin-top: 0.75rem; }}
+    .artifact-links a {{
+      color: var(--accent);
+      display: block;
+      margin: 0.25rem 0;
+    }}
   </style>
 </head>
 <body>
@@ -312,7 +398,7 @@ def _upload_page_html(port: int) -> str:
         Workflow
         <select id="workflow">
           <option value="convert">RSD: convert to CSV (+ maps) · CSV: map exports</option>
-          <option value="pipeline">Full analysis (RSD convert + CSV analyze)</option>
+          <option value="pipeline" selected>Full analysis (RSD convert + CSV analyze)</option>
         </select>
       </label>
       <label>
@@ -335,7 +421,7 @@ def _upload_page_html(port: int) -> str:
 
     <button type="button" id="submitBtn" disabled>Upload and process</button>
     <div id="status"></div>
-    <p class="deploy-version" style="margin-top:1.5rem;font-size:0.75rem;color:var(--muted);">Build: 2026.06.03-upload-progress · accepts .RSD + .CSV</p>
+    <p class="deploy-version" style="margin-top:1.5rem;font-size:0.75rem;color:var(--muted);">Build: 2026.06.03-analytics · accepts .RSD + .CSV</p>
   </div>
   <script>
     const dropzone = document.getElementById('dropzone');
@@ -426,14 +512,37 @@ def _upload_page_html(port: int) -> str:
     }}
 
     function renderResults(data) {{
-      let html = `Done: ${{data.succeeded}}/${{data.total}} succeeded\n`;
-      html += `Output folder: ${{data.output_dir}}\n\n`;
+      let html = `<p><strong>Done:</strong> ${{data.succeeded}}/${{data.total}} succeeded</p>`;
+      const dashboards = [];
+      if (data.dashboard_url) dashboards.push(data.dashboard_url);
+      (data.results || []).forEach(r => {{
+        (r.artifacts || []).forEach(a => {{
+          if (a.type === 'dashboard' && dashboards.indexOf(a.url) < 0) dashboards.push(a.url);
+        }});
+      }});
+      if (dashboards.length) {{
+        html += `<p><a class="dashboard-btn" href="${{dashboards[0]}}">Open analytics dashboard</a></p>`;
+        html += `<p style="color:var(--muted);font-size:0.9rem;">Opening dashboard in a moment…</p>`;
+      }} else {{
+        html += `<p style="color:var(--muted);">For full analytics (fish, heatmaps, dashboard), choose workflow <strong>Full analysis</strong>.</p>`;
+      }}
       (data.results || []).forEach(r => {{
         const cls = r.success ? 'ok' : 'fail';
         html += `<div class="result-item ${{cls}}">${{r.success ? '✓' : '✗'}} ${{r.name}}: ${{r.message}}</div>`;
-        if (r.csv) html += `<div class="result-item">   → ${{r.csv}}</div>`;
+        if (r.artifacts && r.artifacts.length) {{
+          html += '<div class="artifact-links">';
+          r.artifacts.forEach(a => {{
+            html += `<a href="${{a.url}}" target="_blank" rel="noopener">${{a.label}}</a>`;
+          }});
+          html += '</div>';
+        }} else if (r.csv) {{
+          html += `<div class="result-item" style="color:var(--muted);">CSV saved on server</div>`;
+        }}
       }});
       statusEl.innerHTML = html;
+      if (dashboards.length === 1) {{
+        setTimeout(() => {{ window.location.href = dashboards[0]; }}, 1200);
+      }}
     }}
 
     function uploadFormData(form) {{
@@ -554,6 +663,30 @@ def _upload_page_html(port: int) -> str:
 </html>'''
 
 
+
+
+def _guess_content_type(path: Path) -> str:
+    content_type, _ = mimetypes.guess_type(str(path))
+    return content_type or 'application/octet-stream'
+
+
+def _resolve_results_file(output_root: Path, session_id: str, rel_path: str) -> Path:
+    if not session_id or '/' in session_id or '\\' in session_id or '..' in session_id:
+        raise ValueError('Invalid session id')
+    rel = unquote(rel_path).lstrip('/')
+    if not rel or '..' in Path(rel).parts:
+        raise ValueError('Invalid file path')
+    session_dir = (output_root / session_id).resolve()
+    file_path = (session_dir / rel).resolve()
+    if not str(file_path).startswith(str(session_dir)):
+        raise ValueError('Path traversal blocked')
+    if file_path.suffix.lower() not in RESULTS_ALLOWED_SUFFIXES:
+        raise ValueError('File type not allowed')
+    if not file_path.is_file():
+        raise ValueError('File not found')
+    return file_path
+
+
 class SonarUploadHandler(BaseHTTPRequestHandler):
     """HTTP handler for RSD upload UI and processing API."""
 
@@ -585,11 +718,39 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_file(self, file_path: Path) -> None:
+        content = file_path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header('Content-Type', _guess_content_type(file_path))
+        self.send_header('Content-Length', str(len(content)))
+        self.send_header('Cache-Control', 'private, max-age=3600')
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _handle_results_file(self, parsed) -> None:
+        prefix = '/results/'
+        rel = parsed.path[len(prefix):]
+        if not rel:
+            self._send_json({'error': 'Missing session id'}, HTTPStatus.BAD_REQUEST)
+            return
+        parts = rel.split('/', 1)
+        session_id = parts[0]
+        rel_path = parts[1] if len(parts) > 1 else ''
+        try:
+            file_path = _resolve_results_file(self.output_root, session_id, rel_path)
+        except ValueError as exc:
+            self._send_json({'error': str(exc)}, HTTPStatus.NOT_FOUND)
+            return
+        self._send_file(file_path)
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path in ('/', '/index.html'):
             port = self.server.server_address[1]
             self._send_html(_upload_page_html(port))
+            return
+        if parsed.path.startswith('/results/'):
+            self._handle_results_file(parsed)
             return
         if parsed.path == '/api/health':
             self._send_json({'status': 'ok'})
@@ -599,7 +760,7 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
                 'build': APP_BUILD_ID,
                 'server': self.server_version,
                 'accepts': ['.rsd', '.csv'],
-                'features': ['async_jobs', 'csv_analysis', 'streaming_upload'],
+                'features': ['async_jobs', 'csv_analysis', 'streaming_upload', 'results_download'],
             })
             return
         if parsed.path.startswith('/api/jobs/'):
