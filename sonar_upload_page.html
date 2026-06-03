@@ -159,6 +159,7 @@
       border-radius: 8px; text-decoration: none;
     }
     .footer { margin-top: 2rem; text-align: center; font-size: 0.75rem; color: var(--muted); }
+    .footer .legal { display: block; margin-top: 0.45rem; line-height: 1.45; }
     code { font-size: 0.85em; padding: 0.1em 0.35em; background: var(--surface-2); border-radius: 4px; }
   </style>
 </head>
@@ -225,7 +226,10 @@
     </div>
 
     <div id="status" class="status-panel" role="status" aria-live="polite"></div>
-    <p class="footer">Build __BUILD__ · <a href="/area-map" style="color:var(--accent-hover)">Area map</a> · RSD &amp; CSV</p>
+    <p class="footer">
+      Build __BUILD__ · <a href="/area-map" style="color:var(--accent-hover)">Area map</a> · RSD &amp; CSV
+      <span class="legal">Disclaimer: This software is independent and is not affiliated with, endorsed by, or sponsored by Garmin. It processes sonar data collected from compatible devices.</span>
+    </p>
   </div>
   <script>
     const dropzone = document.getElementById('dropzone');

@@ -21,6 +21,7 @@
     .topbar-inner { max-width: 1400px; margin: 0 auto; }
     .topbar h1 { margin: 0; font-size: 1.4rem; font-weight: 700; }
     .topbar p { margin: 0.3rem 0 0; opacity: 0.92; font-size: 0.9rem; }
+    .topbar .legal-disclaimer { margin-top: 0.45rem; font-size: 0.76rem; opacity: 0.88; max-width: 980px; line-height: 1.35; }
     main { max-width: 1400px; margin: 0 auto; padding: 1.25rem; }
     .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
     .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.85rem 1rem; box-shadow: var(--shadow); }
@@ -93,6 +94,7 @@
     <div class="topbar-inner">
       <h1>Survey analytics</h1>
       <p>__TITLE__ · seabed grid __GRID_LABEL__ · source <code>__CSV_NAME__</code></p>
+      <p class="legal-disclaimer">Disclaimer: This software is independent and is not affiliated with, endorsed by, or sponsored by Garmin. It analyzes sonar data collected from compatible devices.</p>
     </div>
   </header>
   <main>
@@ -100,7 +102,7 @@
 
     <section class="panel">
       <h2>Map &amp; sonar recording</h2>
-      <p class="sub">Smaller bathymetry cells for detail. Yellow line = GPS route. Compare sonar perspectives to find what best reveals fish, then click the echogram or map markers to label.</p>
+      <p class="sub">Smaller bathymetry cells for detail. Yellow line = GPS route. Compare sonar perspectives to find what best reveals fish, and click any point on the route to jump to the matching sonar ping for labeling.</p>
       <div class="viz-grid">
         <div>
           <div id="map" role="img" aria-label="Survey map"></div>
@@ -153,7 +155,7 @@
             <button type="button" class="btn btn-secondary" id="exportLabelsBtn">Export training JSON</button>
             <button type="button" class="btn btn-secondary" id="clearLabelsBtn">Clear all</button>
           </div>
-          <div class="label-list" id="labelList"><p class="muted">Click the sonar strip or a fish marker to position a label.</p></div>
+          <div class="label-list" id="labelList"><p class="muted">Click the sonar strip, survey route, or a fish marker to position a label.</p></div>
         </div>
       </div>
       <div>
@@ -617,6 +619,52 @@
       };
     }
 
+    function centerViewOnPing(pingIdx) {
+      if (pingIdx == null || pingIdx < 0 || pingIdx >= pingData.length) return;
+      const span = Math.max(25, Math.min(pingData.length, Math.ceil(viewEnd - viewStart)));
+      viewStart = pingIdx - span / 2;
+      viewEnd = viewStart + span;
+      if (viewStart < 0) { viewEnd -= viewStart; viewStart = 0; }
+      if (viewEnd > pingData.length) { viewStart -= (viewEnd - pingData.length); viewEnd = pingData.length; }
+      viewStart = Math.max(0, viewStart);
+      drawEchogram(pingIdx);
+    }
+
+    function nearestPingIndex(lat, lon, maxDistanceM) {
+      const latScale = 111320;
+      const lonScale = 111320 * Math.max(0.2, Math.cos((lat || 0) * Math.PI / 180));
+      const limitSq = maxDistanceM * maxDistanceM;
+      let bestIdx = -1;
+      let bestSq = Infinity;
+      for (let i = 0; i < pingData.length; i++) {
+        const p = pingData[i];
+        if (p.lat == null || p.lon == null) continue;
+        const dy = (p.lat - lat) * latScale;
+        const dx = (p.lon - lon) * lonScale;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestSq) {
+          bestSq = d2;
+          bestIdx = i;
+        }
+      }
+      if (bestSq > limitSq) return -1;
+      return bestIdx;
+    }
+
+    function focusPingFromTrack(lat, lon) {
+      const idx = nearestPingIndex(lat, lon, 150);
+      if (idx < 0) {
+        hud.textContent = 'Track click · no nearby sonar ping found';
+        return;
+      }
+      const ping = pingData[idx] || {};
+      centerViewOnPing(idx);
+      cursorPing = Object.assign({ source: 'track_click' }, ping, { frame: ping.frame || idx });
+      document.getElementById('addLabelBtn').disabled = false;
+      hud.textContent = 'Track click · ping ' + idx + '/' + totalPings + ' · depth ' + (ping.depth_m != null ? Number(ping.depth_m).toFixed(2) : '—') + ' m · I=' + (ping.intensity != null ? Math.round(ping.intensity) : '—');
+      if (ping.lat != null && ping.lon != null) setPingMarker(ping.lat, ping.lon);
+    }
+
     async function ensureRangeLoaded(start, end) {
       if (!uploadId || end <= pingData.length) return;
       try {
@@ -732,6 +780,13 @@
     });
 
     drawEchogram(-1);
+
+    if (layers.track) {
+      layers.track.on('click', (e) => {
+        if (!e || !e.latlng) return;
+        focusPingFromTrack(e.latlng.lat, e.latlng.lng);
+      });
+    }
 
     // —— Training labels ——
     let labels = [];
