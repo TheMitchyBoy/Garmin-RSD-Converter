@@ -45,11 +45,12 @@ venv.bak/
 htmlcov/
 .tox/
 
-# Output files (keep samples for reference, but ignore generated ones)
+# Output files
 *.csv
 *.geojson
 *.gpx
 *.kml
+*.ply
 
 # Temporary files
 *.tmp
@@ -57,7 +58,6 @@ htmlcov/
 *.log
 
 # OS
-.DS_Store
 Thumbs.db
 
 # Project specific
@@ -65,4 +65,5 @@ output/
 results/
 data/
 *.rsd
+*.RSD
 temp/
