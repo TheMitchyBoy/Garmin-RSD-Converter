@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Survey Analytics · __TITLE__</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <style>
+    :root {
+      --bg: #f1f5f9;
+      --surface: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --accent: #0d9488;
+      --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 10px 30px rgba(15, 23, 42, 0.08);
+      --radius: 14px;
+      --font: "DM Sans", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+    .topbar {
+      background: linear-gradient(135deg, #0f766e 0%, #0891b2 100%);
+      color: white;
+      padding: 1.5rem 1.25rem;
+    }
+    .topbar-inner { max-width: 1180px; margin: 0 auto; }
+    .topbar h1 { margin: 0; font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
+    .topbar p { margin: 0.35rem 0 0; opacity: 0.92; font-size: 0.95rem; }
+    main { max-width: 1180px; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.85rem; margin-bottom: 1.25rem; }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.1rem;
+      box-shadow: var(--shadow);
+    }
+    .stat-label {
+      display: block;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    .stat-value { font-size: 1.65rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      box-shadow: var(--shadow);
+      margin-bottom: 1.25rem;
+    }
+    .panel h2 { margin: 0 0 0.35rem; font-size: 1.1rem; font-weight: 700; }
+    .panel .sub { margin: 0 0 1rem; color: var(--muted); font-size: 0.875rem; }
+    #map {
+      width: 100%;
+      height: min(58vh, 560px);
+      min-height: 360px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      z-index: 0;
+    }
+    .legends { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; }
+    .legend {
+      flex: 1;
+      min-width: 200px;
+      padding: 0.85rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 0.85rem;
+    }
+    .legend h3 {
+      margin: 0 0 0.65rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+    .legend-item { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
+    .swatch { width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.1); flex-shrink: 0; }
+    .swatch-round { border-radius: 50%; }
+    .depth-bar { height: 12px; border-radius: 6px; margin: 0.5rem 0; border: 1px solid var(--border); }
+    .depth-labels { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--muted); }
+    .table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th, td { padding: 0.65rem 0.85rem; text-align: left; border-bottom: 1px solid var(--border); }
+    th { background: var(--bg); color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    tbody tr:hover { background: #f8fafc; }
+    tbody tr:last-child td { border-bottom: none; }
+    .muted { color: var(--muted); }
+    .leaflet-control-layers { border-radius: 10px !important; border: 1px solid var(--border) !important; box-shadow: var(--shadow) !important; font-family: var(--font) !important; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <h1>Survey analytics</h1>
+      <p>__TITLE__ — seabed bathymetry &amp; fish detections</p>
+    </div>
+  </header>
+  <main>
+    <section class="stats">__METRICS_PRIMARY__</section>
+
+    <section class="panel map-section">
+      <h2>Interactive map</h2>
+      <p class="sub">Toggle seabed depth and fish detection layers. Basemap requires network.</p>
+      <div id="map" role="img" aria-label="Survey map"></div>
+      <div class="legends">
+        __DEPTH_LEGEND__
+        __FISH_LEGEND__
+      </div>
+    </section>
+
+    <section class="stats">__METRICS_SECONDARY__</section>
+
+    <section class="panel">
+      <h2>Detection log</h2>
+      <p class="sub">Sample of detected fish from this survey</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Size</th>
+              <th>Latitude</th>
+              <th>Longitude</th>
+              <th>Depth</th>
+              <th>Intensity</th>
+              <th>Confidence</th>
+            </tr>
+          </thead>
+          <tbody>__ROWS__</tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
+    const fishData = __FISH_GEOJSON__;
+    const seabedData = __SEABED_GEOJSON__;
+    const hasSeabed = __HAS_SEABED__;
+
+    const map = L.map('map', { scrollWheelZoom: true });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+
+    const layers = {};
+
+    if (hasSeabed) {
+      layers.seabed = L.geoJSON(seabedData, {
+        style: (feature) => {
+          const p = feature.properties || {};
+          return {
+            fillColor: p.color || '#38bdf8',
+            color: '#0f766e',
+            weight: 1,
+            opacity: 0.85,
+            fillOpacity: p.fill_opacity != null ? p.fill_opacity : 0.72
+          };
+        },
+        onEachFeature: (feature, layer) => {
+          const p = feature.properties || {};
+          layer.bindPopup(
+            '<strong>Seabed</strong><br>Depth: ' + (p.depth_m != null ? p.depth_m + ' m' : 'n/a')
+          );
+        }
+      });
+      layers.seabed.addTo(map);
+    }
+
+    layers.fish = L.geoJSON(fishData, {
+      pointToLayer: (feature, latlng) => {
+        const p = feature.properties || {};
+        const size = p.size || 'unknown';
+        const confidence = p.confidence != null ? p.confidence : 0.5;
+        const radii = { small: 5, medium: 7, large: 9, school: 12 };
+        const radius = (radii[size] || 6) + Math.min(confidence, 1) * 4;
+        return L.circleMarker(latlng, {
+          radius,
+          fillColor: p.color || '#f59e0b',
+          color: '#fff',
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.9
+        });
+      },
+      onEachFeature: (feature, layer) => {
+        const p = feature.properties || {};
+        layer.bindPopup(
+          '<strong>' + (p.size || 'Fish') + '</strong><br>' +
+          'Depth: ' + (p.depth_m != null ? p.depth_m + ' m' : 'n/a') + '<br>' +
+          'Confidence: ' + (p.confidence != null ? p.confidence : 'n/a')
+        );
+      }
+    });
+    layers.fish.addTo(map);
+
+    const overlayMaps = {};
+    if (hasSeabed) overlayMaps['Seabed depth'] = layers.seabed;
+    overlayMaps['Fish detections'] = layers.fish;
+    L.control.layers(null, overlayMaps, { collapsed: false }).addTo(map);
+
+    const allBounds = [];
+    [layers.fish, layers.seabed].filter(Boolean).forEach((layer) => {
+      try {
+        const b = layer.getBounds();
+        if (b.isValid()) allBounds.push(b);
+      } catch (e) {}
+    });
+    if (allBounds.length) {
+      const combined = allBounds.reduce((acc, b) => acc.extend(b));
+      map.fitBounds(combined, { padding: [32, 32] });
+    } else {
+      map.setView([0, 0], 2);
+    }
+  </script>
+</body>
+</html>

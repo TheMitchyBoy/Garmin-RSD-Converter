@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <title>Sonar Survey · Upload</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f1f5f9;
+      --surface: #ffffff;
+      --surface-2: #f8fafc;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --accent: #0d9488;
+      --accent-hover: #0f766e;
+      --accent-soft: #ccfbf1;
+      --ok: #059669;
+      --err: #dc2626;
+      --shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.06);
+      --radius: 14px;
+      --font: "DM Sans", system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    .page { max-width: 640px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+    .brand { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.75rem; }
+    .brand-icon {
+      width: 44px; height: 44px; border-radius: 12px;
+      background: linear-gradient(135deg, #0d9488, #0891b2);
+      display: flex; align-items: center; justify-content: center;
+      color: white; font-size: 1.25rem;
+      box-shadow: 0 4px 12px rgba(13, 148, 136, 0.35);
+    }
+    .brand h1 { margin: 0; font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
+    .brand p { margin: 0.15rem 0 0; font-size: 0.875rem; color: var(--muted); }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 1.35rem;
+      margin-bottom: 1rem;
+    }
+    .card-title {
+      margin: 0 0 0.35rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+    .dropzone {
+      display: block;
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      padding: 2rem 1.25rem;
+      text-align: center;
+      cursor: pointer;
+      background: var(--surface-2);
+      transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+    }
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      box-shadow: 0 0 0 4px rgba(13, 148, 136, 0.12);
+    }
+    .dropzone-icon { font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.85; }
+    .dropzone strong { display: block; color: var(--accent-hover); font-weight: 600; margin-bottom: 0.25rem; }
+    .dropzone .hint { font-size: 0.875rem; color: var(--muted); margin: 0; }
+    .badges { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; margin-top: 0.85rem; }
+    .badge {
+      font-size: 0.7rem; font-weight: 600; padding: 0.2rem 0.55rem;
+      border-radius: 999px; background: var(--surface);
+      border: 1px solid var(--border); color: var(--muted);
+    }
+    input[type=file] { display: none; }
+    .file-list { margin-top: 1rem; text-align: left; max-height: 120px; overflow-y: auto; }
+    .file-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0.45rem 0.65rem; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 8px;
+      margin-bottom: 0.35rem; font-size: 0.85rem;
+    }
+    .file-row span:last-child { color: var(--muted); font-size: 0.8rem; }
+    .options-grid { display: grid; gap: 0.85rem; }
+    @media (min-width: 520px) {
+      .options-grid { grid-template-columns: 1fr 1fr; }
+      .options-grid .span-2 { grid-column: 1 / -1; }
+    }
+    .field label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.35rem; }
+    .field .help { font-weight: 400; color: var(--muted); }
+    select, input[type=text], input[type=number] {
+      width: 100%; padding: 0.6rem 0.75rem; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--surface);
+      color: var(--text); font-family: inherit; font-size: 0.9rem;
+    }
+    select:focus, input:focus {
+      outline: none; border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
+    }
+    .btn-primary {
+      width: 100%; margin-top: 0.25rem; padding: 0.85rem 1.25rem;
+      font-family: inherit; font-size: 1rem; font-weight: 600;
+      border: none; border-radius: 12px;
+      background: linear-gradient(180deg, #14b8a6, #0d9488);
+      color: white; cursor: pointer;
+      box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35);
+    }
+    .btn-primary:hover:not(:disabled) { filter: brightness(1.05); }
+    .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+    .progress-card {
+      display: none; margin-top: 1rem; padding: 1rem 1.15rem;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+    }
+    .progress-card.visible { display: block; }
+    .progress-label { font-size: 0.9rem; font-weight: 500; margin-bottom: 0.65rem; }
+    .progress-track { height: 8px; background: var(--border); border-radius: 999px; overflow: hidden; }
+    .progress-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #14b8a6, #0891b2);
+      border-radius: 999px; transition: width 0.2s ease;
+    }
+    .status-panel {
+      margin-top: 1rem; padding: 1rem 1.15rem;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); font-size: 0.9rem; display: none;
+    }
+    .status-panel.visible { display: block; }
+    .status-panel.error { border-color: #fecaca; background: #fef2f2; color: var(--err); }
+    .status-panel.success { border-color: #a7f3d0; background: #ecfdf5; }
+    .result-item { margin: 0.5rem 0; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+    .result-item:last-child { border-bottom: none; }
+    .ok { color: var(--ok); font-weight: 500; }
+    .fail { color: var(--err); font-weight: 500; }
+    .dashboard-btn {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      margin: 0.75rem 0 0.5rem; padding: 0.75rem 1.2rem; font-weight: 600;
+      border-radius: 10px; background: var(--ok); color: white; text-decoration: none;
+      box-shadow: 0 4px 12px rgba(5, 150, 105, 0.3);
+    }
+    .artifact-links a {
+      display: inline-block; margin: 0.25rem 0.5rem 0.25rem 0;
+      padding: 0.35rem 0.65rem; font-size: 0.8rem; font-weight: 500;
+      color: var(--accent-hover); background: var(--accent-soft);
+      border-radius: 8px; text-decoration: none;
+    }
+    .footer { margin-top: 2rem; text-align: center; font-size: 0.75rem; color: var(--muted); }
+    code { font-size: 0.85em; padding: 0.1em 0.35em; background: var(--surface-2); border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="brand">
+      <div class="brand-icon" aria-hidden="true">◎</div>
+      <div>
+        <h1>Sonar Survey</h1>
+        <p>Upload · analyze · explore</p>
+      </div>
+    </header>
+
+    <section class="card">
+      <p class="card-title">Files</p>
+      <label class="dropzone" id="dropzone" for="fileInput">
+        <div class="dropzone-icon" aria-hidden="true">↑</div>
+        <strong>Drop files here or click to browse</strong>
+        <p class="hint">Garmin <code>.RSD</code> or sonar <code>.CSV</code> exports</p>
+        <div class="badges">
+          <span class="badge">.RSD</span>
+          <span class="badge">.CSV</span>
+          <span class="badge">150 MB max</span>
+        </div>
+        <input type="file" id="fileInput" accept=".rsd,.RSD,.csv,.CSV,text/csv,application/octet-stream" multiple>
+        <div class="file-list" id="fileList"></div>
+      </label>
+    </section>
+
+    <section class="card">
+      <p class="card-title">Processing options</p>
+      <div class="options-grid">
+        <div class="field span-2">
+          <label for="workflow">Workflow</label>
+          <select id="workflow">
+            <option value="convert">Convert / map exports only</option>
+            <option value="pipeline" selected>Full analysis + dashboard</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="maps">Map exports</label>
+          <select id="maps">
+            <option value="">None</option>
+            <option value="all">All formats</option>
+            <option value="geojson">GeoJSON</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="nchunk">Chunk size</label>
+          <input type="number" id="nchunk" value="500" min="0" step="50">
+        </div>
+        <div class="field span-2">
+          <label for="location">Survey name <span class="help">(optional)</span></label>
+          <input type="text" id="location" placeholder="e.g. North Bay">
+        </div>
+      </div>
+    </section>
+
+    <button type="button" class="btn-primary" id="submitBtn" disabled>Upload and analyze</button>
+
+    <div class="progress-card" id="progressCard" aria-live="polite">
+      <div class="progress-label" id="progressLabel">Uploading…</div>
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+
+    <div id="status" class="status-panel" role="status" aria-live="polite"></div>
+    <p class="footer">Build __BUILD__ · RSD &amp; CSV</p>
+  </div>
+  <script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const fileList = document.getElementById('fileList');
+    const submitBtn = document.getElementById('submitBtn');
+    const statusEl = document.getElementById('status');
+    const progressCard = document.getElementById('progressCard');
+    const progressLabel = document.getElementById('progressLabel');
+    const progressFill = document.getElementById('progressFill');
+    let selectedFiles = [];
+    const WEB_UPLOAD_MAX_MB = 150;
+
+    function showProgress(show) {
+      progressCard.classList.toggle('visible', show);
+    }
+    function showStatus(html, kind) {
+      showProgress(false);
+      statusEl.classList.add('visible');
+      statusEl.classList.remove('error', 'success');
+      if (kind) statusEl.classList.add(kind);
+      if (html && html.indexOf('<') >= 0) statusEl.innerHTML = html;
+      else statusEl.textContent = html || '';
+    }
+    function hideStatus() {
+      statusEl.classList.remove('visible', 'error', 'success');
+      statusEl.textContent = '';
+      statusEl.innerHTML = '';
+    }
+
+    function refreshFileList() {
+      submitBtn.disabled = selectedFiles.length === 0;
+      if (!selectedFiles.length) { fileList.innerHTML = ''; return; }
+      fileList.innerHTML = selectedFiles.map(f =>
+        '<div class="file-row"><span>' + f.name + '</span><span>' +
+        (f.size / 1024 / 1024).toFixed(1) + ' MB</span></div>'
+      ).join('');
+    }
+
+    function addFiles(fileListLike) {
+      const incoming = Array.from(fileListLike).filter(f => /\.(rsd|csv)$/i.test(f.name));
+      if (!incoming.length) { showStatus('Please select .RSD or .CSV files only.', 'error'); return; }
+      const names = new Set(selectedFiles.map(f => f.name));
+      const tooLarge = incoming.filter(f => f.size > WEB_UPLOAD_MAX_MB * 1024 * 1024);
+      incoming.forEach(f => { if (!names.has(f.name)) selectedFiles.push(f); });
+      refreshFileList();
+      hideStatus();
+      if (tooLarge.length) {
+        showStatus(tooLarge.map(f => f.name).join(', ') + ' exceed ' + WEB_UPLOAD_MAX_MB + ' MB. Use the CLI locally.', 'error');
+      }
+    }
+
+    fileInput.addEventListener('change', e => addFiles(e.target.files));
+    fileInput.addEventListener('click', e => e.stopPropagation());
+    ['dragenter', 'dragover'].forEach(evt => {
+      dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    });
+    ['dragleave', 'drop'].forEach(evt => {
+      dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('dragover'); });
+    });
+    dropzone.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+
+    function networkErrorHint(context) {
+      return context + ': connection lost. Keep uploads under ' + WEB_UPLOAD_MAX_MB + ' MB or use the CLI.';
+    }
+
+    async function fetchJson(url, options) {
+      let res;
+      try { res = await fetch(url, options); } catch (err) {
+        const msg = (err && err.message) ? err.message : String(err);
+        if (msg === 'Failed to fetch' || err instanceof TypeError) throw new Error(networkErrorHint('Request failed'));
+        throw err;
+      }
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch {
+        const proxyError = (text && /upstream/i.test(text)) || res.status === 502 || res.status === 503;
+        throw new Error(proxyError ? networkErrorHint('Server error') : 'Non-JSON response (' + res.status + ')');
+      }
+      return { res, data };
+    }
+
+    function renderResults(data) {
+      let html = '<p><strong>Done:</strong> ' + data.succeeded + '/' + data.total + ' succeeded</p>';
+      const dashboards = [];
+      if (data.dashboard_url) dashboards.push(data.dashboard_url);
+      (data.results || []).forEach(r => {
+        (r.artifacts || []).forEach(a => {
+          if (a.type === 'dashboard' && dashboards.indexOf(a.url) < 0) dashboards.push(a.url);
+        });
+      });
+      if (dashboards.length) {
+        html += '<p><a class="dashboard-btn" href="' + dashboards[0] + '">Open analytics dashboard →</a></p>';
+        html += '<p style="color:var(--muted);font-size:0.85rem;">Redirecting shortly…</p>';
+      } else {
+        html += '<p style="color:var(--muted);">Select <strong>Full analysis</strong> for the interactive dashboard.</p>';
+      }
+      (data.results || []).forEach(r => {
+        const cls = r.success ? 'ok' : 'fail';
+        html += '<div class="result-item ' + cls + '">' + (r.success ? '✓' : '✗') + ' ' + r.name + ': ' + r.message + '</div>';
+        if (r.artifacts && r.artifacts.length) {
+          html += '<div class="artifact-links">';
+          r.artifacts.forEach(a => { html += '<a href="' + a.url + '" target="_blank" rel="noopener">' + a.label + '</a>'; });
+          html += '</div>';
+        }
+      });
+      showStatus(html, 'success');
+      if (dashboards.length === 1) setTimeout(() => { window.location.href = dashboards[0]; }, 1200);
+    }
+
+    function uploadFormData(form) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        const started = Date.now();
+        let lastLoaded = 0, lastTotal = 0, lengthComputable = false;
+        function renderUploadProgress() {
+          const secs = Math.round((Date.now() - started) / 1000);
+          const loadedMb = (lastLoaded / 1024 / 1024).toFixed(1);
+          let pct = 0, label;
+          if (lengthComputable && lastTotal > 0) {
+            pct = Math.max(1, Math.round((lastLoaded / lastTotal) * 100));
+            label = 'Uploading ' + pct + '% · ' + loadedMb + ' / ' + (lastTotal / 1024 / 1024).toFixed(1) + ' MB · ' + secs + 's';
+          } else {
+            label = 'Uploading ' + loadedMb + ' MB · ' + secs + 's';
+          }
+          progressLabel.textContent = label;
+          progressFill.style.width = (lengthComputable && lastTotal > 0 ? pct : 8) + '%';
+        }
+        const tick = setInterval(renderUploadProgress, 1000);
+        const stopTick = () => clearInterval(tick);
+        xhr.open('POST', '/api/process');
+        xhr.timeout = 900000;
+        xhr.upload.onprogress = (evt) => {
+          lastLoaded = evt.loaded; lastTotal = evt.total || 0;
+          lengthComputable = evt.lengthComputable;
+          renderUploadProgress();
+        };
+        xhr.onload = () => {
+          stopTick(); showProgress(false);
+          try {
+            resolve({ res: { ok: xhr.status >= 200 && xhr.status < 300 }, data: JSON.parse(xhr.responseText || '{}') });
+          } catch { reject(new Error('Invalid server response')); }
+        };
+        xhr.onerror = () => { stopTick(); showProgress(false); reject(new Error(networkErrorHint('Upload failed'))); };
+        xhr.ontimeout = () => { stopTick(); showProgress(false); reject(new Error(networkErrorHint('Timed out'))); };
+        xhr.send(form);
+      });
+    }
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    submitBtn.addEventListener('click', async () => {
+      if (!selectedFiles.length) return;
+      submitBtn.disabled = true;
+      hideStatus();
+      showProgress(true);
+      progressFill.style.width = '0%';
+      progressLabel.textContent = 'Starting upload…';
+      const form = new FormData();
+      selectedFiles.forEach(f => form.append('files', f));
+      form.append('workflow', document.getElementById('workflow').value);
+      form.append('maps', document.getElementById('maps').value);
+      form.append('location', document.getElementById('location').value);
+      form.append('nchunk', document.getElementById('nchunk').value);
+      try {
+        const { res, data } = await uploadFormData(form);
+        if (!res.ok) throw new Error(data.error || 'Upload failed');
+        const jobId = data.job_id;
+        if (!jobId) throw new Error('No job id returned');
+        showProgress(false);
+        showStatus('Processing ' + (data.file_count || selectedFiles.length) + ' file(s)…', null);
+        let pollErrors = 0;
+        while (true) {
+          await sleep(2000);
+          let statusRes, statusData;
+          try {
+            const poll = await fetchJson('/api/jobs/' + encodeURIComponent(jobId));
+            statusRes = poll.res; statusData = poll.data;
+          } catch (e) {
+            pollErrors += 1;
+            if (pollErrors >= 15) throw e;
+            showStatus('Retrying status check (' + pollErrors + '/15)…', null);
+            continue;
+          }
+          pollErrors = 0;
+          if (!statusRes.ok) throw new Error(statusData.error || 'Status error');
+          if (statusData.status === 'pending' || statusData.status === 'running') {
+            showStatus('Analyzing ' + (statusData.file_count || selectedFiles.length) + ' file(s)…', null);
+            continue;
+          }
+          if (statusData.status === 'failed') throw new Error(statusData.error || 'Processing failed');
+          if (statusData.status === 'completed' && statusData.result) { renderResults(statusData.result); return; }
+          throw new Error('Unexpected status: ' + statusData.status);
+        }
+      } catch (err) {
+        showProgress(false);
+        showStatus('Error: ' + err.message, 'error');
+      } finally {
+        submitBtn.disabled = selectedFiles.length === 0;
+      }
+    });
+  </script>
+</body>
+</html>

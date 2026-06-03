@@ -76,258 +76,39 @@ class WebVisualizer:
         fish_legend_html = WebVisualizer._build_fish_legend_html()
         has_seabed = bool(seabed_features)
 
-        document = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sonar Dashboard - {title}</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-  <style>
-    :root {{
-      color-scheme: light;
-      --bg: #f4f7fb;
-      --card: #ffffff;
-      --ink: #1f2937;
-      --muted: #64748b;
-      --accent: #2563eb;
-      --line: #dbe3ef;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      font-family: Arial, Helvetica, sans-serif;
-      background: var(--bg);
-      color: var(--ink);
-    }}
-    header {{
-      padding: 32px;
-      background: linear-gradient(135deg, #0c4a6e, #2563eb);
-      color: white;
-    }}
-    header h1 {{ margin: 0 0 8px; font-size: 32px; }}
-    header p {{ margin: 0; opacity: 0.9; }}
-    main {{ max-width: 1180px; margin: 0 auto; padding: 24px; }}
-    .grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-      gap: 16px;
-      margin-bottom: 20px;
-    }}
-    .card {{
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 18px;
-      box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
-    }}
-    .label {{ color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }}
-    .value {{ font-size: 28px; font-weight: 700; margin-top: 6px; }}
-    h2 {{ margin-top: 0; }}
-    #map {{
-      width: 100%;
-      height: 520px;
-      border-radius: 10px;
-      border: 1px solid var(--line);
-    }}
-    .map-section {{ position: relative; }}
-    .legends {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 20px;
-      margin-top: 14px;
-    }}
-    .legend {{
-      flex: 1;
-      min-width: 200px;
-      padding: 12px 14px;
-      background: #f8fafc;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      font-size: 13px;
-    }}
-    .legend h3 {{
-      margin: 0 0 10px;
-      font-size: 13px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--muted);
-    }}
-    .legend-item {{
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 6px;
-    }}
-    .swatch {{
-      width: 18px;
-      height: 18px;
-      border-radius: 4px;
-      border: 1px solid rgba(0,0,0,0.12);
-      flex-shrink: 0;
-    }}
-    .swatch-round {{
-      border-radius: 50%;
-    }}
-    .depth-bar {{
-      height: 14px;
-      border-radius: 6px;
-      margin: 8px 0;
-      border: 1px solid var(--line);
-    }}
-    .depth-labels {{
-      display: flex;
-      justify-content: space-between;
-      font-size: 12px;
-      color: var(--muted);
-    }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
-    th, td {{ padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; }}
-    th {{ color: var(--muted); font-weight: 700; }}
-    .muted {{ color: var(--muted); }}
-  </style>
-</head>
-<body>
-  <header>
-    <h1>Sonar Survey Dashboard</h1>
-    <p>{title} — seabed bathymetry &amp; fish detections</p>
-  </header>
-  <main>
-    <section class="grid">
-      {WebVisualizer._metric_card("Fish Detections", f"{total_detections:,}")}
-      {WebVisualizer._metric_card("Health", health.get("overall_status", "Unknown"))}
-      {WebVisualizer._metric_card("Health Score", f'{health.get("overall_health_score", 0)}/100')}
-      {WebVisualizer._metric_card("Avg Depth", WebVisualizer._format_number(population.get("average_depth"), "m"))}
-      {WebVisualizer._metric_card("Avg Intensity", WebVisualizer._format_number(population.get("average_intensity")))}
-      {WebVisualizer._metric_card("Schools", f'{composition.get("school", 0):,}')}
-    </section>
+        template_path = Path(__file__).with_name("sonar_dashboard_template.html")
+        depth_block = (
+            depth_legend_html
+            if has_seabed
+            else '<div class="legend muted"><h3>Seabed</h3><p>No bathymetry layer for this run.</p></div>'
+        )
+        metrics_primary = "".join([
+            WebVisualizer._metric_card("Detections", f"{total_detections:,}"),
+            WebVisualizer._metric_card("Health", health.get("overall_status", "Unknown")),
+            WebVisualizer._metric_card("Health score", f'{health.get("overall_health_score", 0)}/100'),
+            WebVisualizer._metric_card("Avg depth", WebVisualizer._format_number(population.get("average_depth"), "m")),
+            WebVisualizer._metric_card("Avg intensity", WebVisualizer._format_number(population.get("average_intensity"))),
+            WebVisualizer._metric_card("Schools", f'{composition.get("school", 0):,}'),
+        ])
+        metrics_secondary = "".join([
+            WebVisualizer._metric_card("Min depth", WebVisualizer._format_number(depth_stats.get("min_depth_m"), "m")),
+            WebVisualizer._metric_card("Median depth", WebVisualizer._format_number(depth_stats.get("median_depth_m"), "m")),
+            WebVisualizer._metric_card("Max depth", WebVisualizer._format_number(depth_stats.get("max_depth_m"), "m")),
+            WebVisualizer._metric_card("Avg confidence", WebVisualizer._format_number(population.get("average_confidence"))),
+        ])
+        document = (
+            template_path.read_text(encoding="utf-8")
+            .replace("__TITLE__", title)
+            .replace("__METRICS_PRIMARY__", metrics_primary)
+            .replace("__METRICS_SECONDARY__", metrics_secondary)
+            .replace("__DEPTH_LEGEND__", depth_block)
+            .replace("__FISH_LEGEND__", fish_legend_html)
+            .replace("__ROWS__", rows)
+            .replace("__FISH_GEOJSON__", fish_geojson)
+            .replace("__SEABED_GEOJSON__", seabed_geojson)
+            .replace("__HAS_SEABED__", str(has_seabed).lower())
+        )
 
-    <section class="card map-section">
-      <h2>Survey Map</h2>
-      <p class="muted">Toggle layers: seabed depth (bathymetry) under fish detection markers. Basemap requires network.</p>
-      <div id="map" role="img" aria-label="Seabed and fish detection map"></div>
-      <div class="legends">
-        {depth_legend_html if has_seabed else '<div class="legend muted"><h3>Seabed</h3><p>No bathymetry layer — pass <code>--depth-heatmap</code> or run heatmap first.</p></div>'}
-        {fish_legend_html}
-      </div>
-    </section>
-
-    <section class="grid" style="margin-top: 20px;">
-      {WebVisualizer._metric_card("Min Depth", WebVisualizer._format_number(depth_stats.get("min_depth_m"), "m"))}
-      {WebVisualizer._metric_card("Median Depth", WebVisualizer._format_number(depth_stats.get("median_depth_m"), "m"))}
-      {WebVisualizer._metric_card("Max Depth", WebVisualizer._format_number(depth_stats.get("max_depth_m"), "m"))}
-      {WebVisualizer._metric_card("Avg Confidence", WebVisualizer._format_number(population.get("average_confidence")))}
-    </section>
-
-    <section class="card">
-      <h2>Detection Details</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Size</th>
-            <th>Latitude</th>
-            <th>Longitude</th>
-            <th>Depth</th>
-            <th>Intensity</th>
-            <th>Confidence</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows}
-        </tbody>
-      </table>
-    </section>
-  </main>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script>
-    const fishData = {fish_geojson};
-    const seabedData = {seabed_geojson};
-    const hasSeabed = {str(has_seabed).lower()};
-
-    const map = L.map('map');
-    L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors'
-    }}).addTo(map);
-
-    const layers = {{}};
-
-    if (hasSeabed) {{
-      layers.seabed = L.geoJSON(seabedData, {{
-        style: (feature) => {{
-          const p = feature.properties || {{}};
-          return {{
-            fillColor: p.color || '#38bdf8',
-            color: p.color || '#0c4a6e',
-            weight: 1,
-            opacity: 0.85,
-            fillOpacity: p.fill_opacity != null ? p.fill_opacity : 0.75
-          }};
-        }},
-        onEachFeature: (feature, layer) => {{
-          const p = feature.properties || {{}};
-          layer.bindPopup(
-            '<strong>Seabed depth</strong><br>' +
-            'Depth: ' + (p.depth_m != null ? p.depth_m + ' m' : 'n/a') +
-            (p.point_count ? '<br>Samples: ' + p.point_count : '')
-          );
-        }}
-      }});
-      layers.seabed.addTo(map);
-    }}
-
-    layers.fish = L.geoJSON(fishData, {{
-      pointToLayer: (feature, latlng) => {{
-        const p = feature.properties || {{}};
-        const size = p.size || 'unknown';
-        const confidence = p.confidence != null ? p.confidence : 0.5;
-        const radii = {{ small: 5, medium: 7, large: 9, school: 12 }};
-        const radius = (radii[size] || 6) + Math.min(confidence, 1) * 4;
-        return L.circleMarker(latlng, {{
-          radius,
-          fillColor: p.color || '#f59e0b',
-          color: '#1e293b',
-          weight: 1.5,
-          opacity: 0.95,
-          fillOpacity: 0.88
-        }});
-      }},
-      onEachFeature: (feature, layer) => {{
-        const p = feature.properties || {{}};
-        layer.bindPopup(
-          '<strong>' + (p.size || 'unknown') + ' fish</strong><br>' +
-          'Depth: ' + (p.depth_m != null ? p.depth_m + ' m' : 'n/a') + '<br>' +
-          'Intensity: ' + (p.intensity != null ? p.intensity : 'n/a') + '<br>' +
-          'Confidence: ' + (p.confidence != null ? p.confidence : 'n/a')
-        );
-      }}
-    }});
-    layers.fish.addTo(map);
-
-    const overlayMaps = {{}};
-    if (hasSeabed) overlayMaps['Seabed depth'] = layers.seabed;
-    overlayMaps['Fish detections'] = layers.fish;
-    L.control.layers(null, overlayMaps, {{ collapsed: false }}).addTo(map);
-
-    const allBounds = [];
-    [layers.fish, layers.seabed].filter(Boolean).forEach((layer) => {{
-      try {{
-        const b = layer.getBounds();
-        if (b.isValid()) allBounds.push(b);
-      }} catch (e) {{}}
-    }});
-    if (allBounds.length) {{
-      const combined = allBounds.reduce((acc, b) => acc.extend(b));
-      map.fitBounds(combined, {{ padding: [28, 28] }});
-    }} else {{
-      map.setView([0, 0], 2);
-    }}
-  </script>
-</body>
-</html>
-"""
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(document)
 
@@ -448,9 +229,9 @@ class WebVisualizer:
     @staticmethod
     def _metric_card(label: str, value: Any) -> str:
         return (
-            '<article class="card">'
-            f'<div class="label">{html.escape(str(label))}</div>'
-            f'<div class="value">{html.escape(str(value))}</div>'
+            '<article class="stat-card">'
+            f'<span class="stat-label">{html.escape(str(label))}</span>'
+            f'<span class="stat-value">{html.escape(str(value))}</span>'
             '</article>'
         )
 
