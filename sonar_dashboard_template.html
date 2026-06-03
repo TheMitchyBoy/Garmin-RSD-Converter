@@ -127,7 +127,7 @@
           <canvas id="echogram" width="1200" height="420" aria-label="Sonar echogram with perspective modes"></canvas>
           <div class="echogram-hud" id="echoHud">Ping — · depth — m</div>
           </div>
-          <p class="echogram-note">Tip: start with <strong>Waterfall</strong>, use <strong>Bottom-lock</strong> for fish close to seabed, then compare <strong>Contrast</strong> and <strong>Change</strong> for weak or moving targets.</p>
+          <p class="echogram-note">Tip: start with <strong>Waterfall</strong>, use <strong>Bottom-lock</strong> for fish close to seabed, then compare <strong>Contrast</strong> and <strong>Change</strong> for weak or moving targets. Clicking the echogram locks the cursor at that exact fish spot for labeling.</p>
         </div>
       </div>
     </section>
@@ -222,18 +222,19 @@
         const p = f.properties || {};
         layer.bindPopup('<strong>' + (p.size || 'fish') + '</strong><br>Click to use for labeling');
         layer.on('click', () => {
-          cursorPing = {
-            frame: p.frame || 0,
-            time_s: null,
-            lat: f.geometry.coordinates[1],
-            lon: f.geometry.coordinates[0],
-            depth_m: p.depth_m,
-            intensity: p.intensity,
-            source: 'auto_detection'
-          };
-          document.getElementById('addLabelBtn').disabled = false;
-          setPingMarker(cursorPing.lat, cursorPing.lon);
-          document.getElementById('echoHud').textContent = 'Auto-detection · depth ' + (p.depth_m != null ? p.depth_m + ' m' : '—');
+          const lat = f.geometry.coordinates[1];
+          const lon = f.geometry.coordinates[0];
+          const idx = nearestPingIndex(lat, lon, 220);
+          const clampedIdx = idx >= 0 ? idx : Math.max(0, Math.min(pingData.length - 1, Number.isFinite(p.frame) ? Math.round(p.frame) : 0));
+          const basePing = pingData[clampedIdx] || {};
+          const fishPing = Object.assign({}, basePing, {
+            lat,
+            lon,
+            depth_m: p.depth_m != null ? p.depth_m : basePing.depth_m,
+            intensity: p.intensity != null ? p.intensity : basePing.intensity,
+          });
+          lockCursorAtPing(clampedIdx, fishPing, 'auto_detection');
+          document.getElementById('echoHud').textContent = 'Auto-detection locked · ping ' + clampedIdx + '/' + totalPings + ' · depth ' + (fishPing.depth_m != null ? Number(fishPing.depth_m).toFixed(2) : '—') + ' m';
         });
       }
     }).addTo(map);
@@ -300,6 +301,7 @@
     let viewStart = 0;
     let viewEnd = pingData.length;
     let highlightIdx = -1;
+    let lockedCursor = null;
     let isPanning = false;
     let panStartX = 0;
     let panStartView = [0, 0];
@@ -567,6 +569,42 @@
       ctx.strokeRect(x - 3, 0, 6, canvas.height);
     }
 
+    function drawLockedDepthMarker(selection, startIndex, sliceLength, maxDepth, bottomRows) {
+      if (!selection || selection.idx == null || selection.depth_m == null) return;
+      if (selection.idx < startIndex || selection.idx >= (startIndex + sliceLength)) return;
+      const localIdx = selection.idx - startIndex;
+      const w = canvas.width;
+      const h = canvas.height;
+      const x = ((localIdx + 0.5) / Math.max(1, sliceLength)) * w;
+      let sourceRow = (Number(selection.depth_m) / Math.max(1e-6, maxDepth)) * (VIEW_ROWS - 1);
+      sourceRow = Math.max(0, Math.min(VIEW_ROWS - 1, sourceRow));
+      let displayRow = sourceRow;
+      if (currentPerspective === 'bottom_lock' && bottomRows && bottomRows.length > localIdx) {
+        const targetBottomRow = Math.floor((VIEW_ROWS - 1) * BOTTOM_LOCK_ROW_FRACTION);
+        displayRow = sourceRow - (bottomRows[localIdx] - targetBottomRow);
+      }
+      displayRow = Math.max(0, Math.min(VIEW_ROWS - 1, displayRow));
+      const y = (displayRow / (VIEW_ROWS - 1)) * h;
+
+      ctx.strokeStyle = 'rgba(34, 211, 238, 0.92)';
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#22d3ee';
+      ctx.beginPath();
+      ctx.arc(x, y, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, 7.2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
     function updateZoomLabel() {
       const n = Math.max(1, Math.ceil(viewEnd - viewStart));
       zoomLabel.textContent = PERSPECTIVE_LABELS[currentPerspective] + ' · showing ' + n + ' of ' + totalPings + ' pings · scroll to zoom, drag to pan';
@@ -579,12 +617,14 @@
       const windowStart = Math.max(0, Math.floor(viewStart));
       const windowEnd = Math.min(pingData.length, Math.ceil(viewEnd));
       const renderSignature = currentPerspective + '|' + windowStart + '|' + windowEnd + '|' + pingData.length;
+      const activeIdx = lockedCursor && lockedCursor.idx != null ? lockedCursor.idx : hIdx;
       ctx.fillStyle = '#0c1222';
       ctx.fillRect(0, 0, w, h);
 
       if (lastRender.signature === renderSignature && lastRender.baseImage) {
         ctx.putImageData(lastRender.baseImage, 0, 0);
-        drawHighlight(hIdx, lastRender.startIndex, lastRender.slice.length);
+        drawHighlight(activeIdx, lastRender.startIndex, lastRender.slice.length);
+        drawLockedDepthMarker(lockedCursor, lastRender.startIndex, lastRender.slice.length, lastRender.maxDepth, lastRender.bottomRows);
         updateZoomLabel();
         return;
       }
@@ -605,7 +645,8 @@
       drawBottomGuide(base.bottomRows);
       drawDepthScale(scales.maxDepth);
       const baseImage = ctx.getImageData(0, 0, w, h);
-      drawHighlight(hIdx, start, slice.length);
+      drawHighlight(activeIdx, start, slice.length);
+      drawLockedDepthMarker(lockedCursor, start, slice.length, scales.maxDepth, base.bottomRows);
       updateZoomLabel();
 
       lastRender = {
@@ -617,6 +658,19 @@
         signature: renderSignature,
         baseImage,
       };
+    }
+
+    function lockCursorAtPing(idx, ping, source) {
+      if (idx == null || idx < 0 || idx >= pingData.length) return;
+      const lockedDepth = ping && ping.depth_m != null ? Number(ping.depth_m) : null;
+      lockedCursor = {
+        idx,
+        depth_m: Number.isFinite(lockedDepth) ? lockedDepth : null,
+      };
+      cursorPing = Object.assign({ source: source || 'user' }, ping || {}, { frame: (ping && ping.frame) || idx });
+      document.getElementById('addLabelBtn').disabled = false;
+      drawEchogram(idx);
+      if (cursorPing.lat != null && cursorPing.lon != null) setPingMarker(cursorPing.lat, cursorPing.lon);
     }
 
     function centerViewOnPing(pingIdx) {
@@ -659,10 +713,8 @@
       }
       const ping = pingData[idx] || {};
       centerViewOnPing(idx);
-      cursorPing = Object.assign({ source: 'track_click' }, ping, { frame: ping.frame || idx });
-      document.getElementById('addLabelBtn').disabled = false;
+      lockCursorAtPing(idx, ping, 'track_click');
       hud.textContent = 'Track click · ping ' + idx + '/' + totalPings + ' · depth ' + (ping.depth_m != null ? Number(ping.depth_m).toFixed(2) : '—') + ' m · I=' + (ping.intensity != null ? Math.round(ping.intensity) : '—');
-      if (ping.lat != null && ping.lon != null) setPingMarker(ping.lat, ping.lon);
     }
 
     async function ensureRangeLoaded(start, end) {
@@ -744,10 +796,14 @@
         return;
       }
       const rect = canvas.getBoundingClientRect();
+      const relX = e.clientX - rect.left;
+      const relY = e.clientY - rect.top;
+      if (relX < 0 || relY < 0 || relX > rect.width || relY > rect.height) return;
       const scaleX = canvas.width / rect.width;
       const scaleY = canvas.height / rect.height;
-      const hit = pingAtCanvas((e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY);
+      const hit = pingAtCanvas(relX * scaleX, relY * scaleY);
       if (!hit) return;
+      if (lockedCursor && lockedCursor.idx != null) return;
       const p = hit.ping;
       hud.textContent = 'Ping ' + hit.idx + '/' + totalPings + ' · depth ' + (p.depth_m != null ? p.depth_m.toFixed(2) : '—') + ' m · I=' + (p.intensity != null ? Math.round(p.intensity) : '—');
       drawEchogram(hit.idx);
@@ -760,10 +816,8 @@
       const scaleY = canvas.height / rect.height;
       const hit = pingAtCanvas((e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY);
       if (!hit) return;
-      cursorPing = Object.assign({ source: 'sonar_click' }, hit.ping, { frame: hit.ping.frame || hit.idx });
-      document.getElementById('addLabelBtn').disabled = false;
-      drawEchogram(hit.idx);
-      if (cursorPing.lat != null) setPingMarker(cursorPing.lat, cursorPing.lon);
+      lockCursorAtPing(hit.idx, hit.ping, 'sonar_click');
+      hud.textContent = 'Locked ping ' + hit.idx + '/' + totalPings + ' · depth ' + (hit.ping.depth_m != null ? hit.ping.depth_m.toFixed(2) : '—') + ' m · I=' + (hit.ping.intensity != null ? Math.round(hit.ping.intensity) : '—');
     });
 
     perspectiveSelect.addEventListener('change', () => {
