@@ -11,11 +11,15 @@ import argparse
 import json
 import logging
 import sys
+import threading
+import time
 import uuid
+from dataclasses import dataclass, field
+from enum import Enum
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from batch_processor import batch_convert, batch_pipeline, format_batch_summary
@@ -23,6 +27,101 @@ from batch_processor import batch_convert, batch_pipeline, format_batch_summary
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB per request
+MAX_RETAINED_JOBS = 100
+JOB_POLL_INTERVAL_SEC = 2
+
+
+class JobStatus(str, Enum):
+    PENDING = 'pending'
+    RUNNING = 'running'
+    COMPLETED = 'completed'
+    FAILED = 'failed'
+
+
+@dataclass
+class ProcessingJob:
+    """Background RSD conversion job (avoids long-lived HTTP requests on Railway)."""
+
+    id: str
+    status: JobStatus = JobStatus.PENDING
+    error: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
+    created_at: float = field(default_factory=time.time)
+    file_count: int = 0
+
+
+def _summary_to_payload(summary, session_dir: Path) -> Dict[str, Any]:
+    return {
+        'total': summary.total,
+        'succeeded': summary.succeeded,
+        'failed': summary.failed,
+        'output_dir': str(session_dir.resolve()),
+        'results': [
+            {
+                'name': item.input_path.name,
+                'success': item.success,
+                'message': item.message,
+                'csv': str(item.csv_path) if item.csv_path else None,
+            }
+            for item in summary.results
+        ],
+    }
+
+
+def _prune_old_jobs(jobs: Dict[str, ProcessingJob]) -> None:
+    if len(jobs) <= MAX_RETAINED_JOBS:
+        return
+    ordered = sorted(jobs.values(), key=lambda job: job.created_at)
+    for job in ordered[: len(jobs) - MAX_RETAINED_JOBS]:
+        jobs.pop(job.id, None)
+
+
+def _run_processing_job(
+    job_id: str,
+    saved_paths: List[Path],
+    session_dir: Path,
+    workflow: str,
+    nchunk: int,
+    map_formats: Optional[List[str]],
+    location: Optional[str],
+    jobs: Dict[str, ProcessingJob],
+    jobs_lock: threading.Lock,
+) -> None:
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job:
+            job.status = JobStatus.RUNNING
+
+    try:
+        if workflow == 'pipeline':
+            summary = batch_pipeline(
+                saved_paths,
+                output_dir=session_dir,
+                nchunk=nchunk,
+                location=location,
+            )
+        else:
+            summary = batch_convert(
+                saved_paths,
+                output_dir=session_dir,
+                nchunk=nchunk,
+                map_formats=map_formats,
+            )
+        payload = _summary_to_payload(summary, session_dir)
+        logger.info(format_batch_summary(summary))
+        with jobs_lock:
+            job = jobs.get(job_id)
+            if job:
+                job.status = JobStatus.COMPLETED
+                job.result = payload
+    except Exception as exc:
+        logger.exception('Batch processing failed for job %s', job_id)
+        with jobs_lock:
+            job = jobs.get(job_id)
+            if job:
+                job.status = JobStatus.FAILED
+                job.error = str(exc)
+
 
 
 def _upload_page_html(port: int) -> str:
@@ -203,10 +302,38 @@ def _upload_page_html(port: int) -> str:
     }});
     dropzone.addEventListener('drop', e => addFiles(e.dataTransfer.files));
 
+    async function readJsonResponse(res) {{
+      const text = await res.text();
+      try {{
+        return JSON.parse(text);
+      }} catch {{
+        const proxyError = (text && /upstream/i.test(text)) || res.status === 502 || res.status === 503;
+        const hint = proxyError
+          ? 'The server or proxy closed the connection (often a timeout on large files). Try again, use a smaller survey, or convert locally: python sonar_cli.py convert yourfile.RSD'
+          : `Server returned non-JSON (${{res.status}}): ${{String(text).slice(0, 200)}}`;
+        throw new Error(hint);
+      }}
+    }}
+
+    function renderResults(data) {{
+      let html = `Done: ${{data.succeeded}}/${{data.total}} succeeded\n`;
+      html += `Output folder: ${{data.output_dir}}\n\n`;
+      (data.results || []).forEach(r => {{
+        const cls = r.success ? 'ok' : 'fail';
+        html += `<div class="result-item ${{cls}}">${{r.success ? '✓' : '✗'}} ${{r.name}}: ${{r.message}}</div>`;
+        if (r.csv) html += `<div class="result-item">   → ${{r.csv}}</div>`;
+      }});
+      statusEl.innerHTML = html;
+    }}
+
+    function sleep(ms) {{
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }}
+
     submitBtn.addEventListener('click', async () => {{
       if (!selectedFiles.length) return;
       submitBtn.disabled = true;
-      statusEl.textContent = 'Uploading and processing… this may take a while for large surveys.';
+      statusEl.textContent = 'Uploading…';
 
       const form = new FormData();
       selectedFiles.forEach(f => form.append('files', f));
@@ -217,16 +344,34 @@ def _upload_page_html(port: int) -> str:
 
       try {{
         const res = await fetch('/api/process', {{ method: 'POST', body: form }});
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Processing failed');
-        let html = `Done: ${{data.succeeded}}/${{data.total}} succeeded\\n`;
-        html += `Output folder: ${{data.output_dir}}\\n\\n`;
-        (data.results || []).forEach(r => {{
-          const cls = r.success ? 'ok' : 'fail';
-          html += `<div class="result-item ${{cls}}">${{r.success ? '✓' : '✗'}} ${{r.name}}: ${{r.message}}</div>`;
-          if (r.csv) html += `<div class="result-item">   → ${{r.csv}}</div>`;
-        }});
-        statusEl.innerHTML = html;
+        const data = await readJsonResponse(res);
+        if (!res.ok) throw new Error(data.error || 'Upload failed');
+
+        const jobId = data.job_id;
+        if (!jobId) throw new Error('Server did not return a job id');
+
+        statusEl.textContent = 'Processing… large surveys may take several minutes.';
+
+        while (true) {{
+          await sleep(2000);
+          const statusRes = await fetch('/api/jobs/' + encodeURIComponent(jobId));
+          const statusData = await readJsonResponse(statusRes);
+          if (!statusRes.ok) throw new Error(statusData.error || 'Could not read job status');
+
+          if (statusData.status === 'pending' || statusData.status === 'running') {{
+            const n = statusData.file_count || selectedFiles.length;
+            statusEl.textContent = `Processing ${{n}} file(s)… this may take several minutes.`;
+            continue;
+          }}
+          if (statusData.status === 'failed') {{
+            throw new Error(statusData.error || 'Processing failed');
+          }}
+          if (statusData.status === 'completed' && statusData.result) {{
+            renderResults(statusData.result);
+            return;
+          }}
+          throw new Error('Unexpected job status: ' + statusData.status);
+        }}
       }} catch (err) {{
         statusEl.textContent = 'Error: ' + err.message;
       }} finally {{
@@ -243,7 +388,9 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
 
     uploads_root: Path
     output_root: Path
-    server_version = 'SonarUpload/1.0'
+    jobs: Dict[str, ProcessingJob]
+    jobs_lock: threading.Lock
+    server_version = 'SonarUpload/1.1'
 
     def log_message(self, fmt: str, *args) -> None:
         logger.info('%s - %s', self.address_string(), fmt % args)
@@ -272,6 +419,27 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == '/api/health':
             self._send_json({'status': 'ok'})
+            return
+        if parsed.path.startswith('/api/jobs/'):
+            job_id = parsed.path[len('/api/jobs/'):].strip('/')
+            if not job_id:
+                self._send_json({'error': 'Missing job id'}, HTTPStatus.BAD_REQUEST)
+                return
+            with self.jobs_lock:
+                job = self.jobs.get(job_id)
+            if not job:
+                self._send_json({'error': 'Job not found'}, HTTPStatus.NOT_FOUND)
+                return
+            body: Dict[str, Any] = {
+                'job_id': job.id,
+                'status': job.status.value,
+                'file_count': job.file_count,
+            }
+            if job.error:
+                body['error'] = job.error
+            if job.result:
+                body['result'] = job.result
+            self._send_json(body)
             return
         self._send_json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
 
@@ -322,43 +490,39 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
         elif maps == 'geojson':
             map_formats = ['geojson']
 
-        try:
-            if workflow == 'pipeline':
-                summary = batch_pipeline(
-                    saved_paths,
-                    output_dir=session_dir,
-                    nchunk=nchunk,
-                    location=location,
-                )
-            else:
-                summary = batch_convert(
-                    saved_paths,
-                    output_dir=session_dir,
-                    nchunk=nchunk,
-                    map_formats=map_formats,
-                )
-        except Exception as exc:
-            logger.exception('Batch processing failed')
-            self._send_json({'error': str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
-            return
+        job_id = uuid.uuid4().hex[:12]
+        job = ProcessingJob(id=job_id, file_count=len(saved_paths))
+        with self.jobs_lock:
+            self.jobs[job_id] = job
+            _prune_old_jobs(self.jobs)
 
-        logger.info(format_batch_summary(summary))
+        worker = threading.Thread(
+            target=_run_processing_job,
+            name=f'rsd-job-{job_id}',
+            daemon=True,
+            kwargs={
+                'job_id': job_id,
+                'saved_paths': list(saved_paths),
+                'session_dir': session_dir,
+                'workflow': workflow,
+                'nchunk': nchunk,
+                'map_formats': map_formats,
+                'location': location,
+                'jobs': self.jobs,
+                'jobs_lock': self.jobs_lock,
+            },
+        )
+        worker.start()
 
-        self._send_json({
-            'total': summary.total,
-            'succeeded': summary.succeeded,
-            'failed': summary.failed,
-            'output_dir': str(session_dir.resolve()),
-            'results': [
-                {
-                    'name': item.input_path.name,
-                    'success': item.success,
-                    'message': item.message,
-                    'csv': str(item.csv_path) if item.csv_path else None,
-                }
-                for item in summary.results
-            ],
-        })
+        self._send_json(
+            {
+                'job_id': job_id,
+                'status': JobStatus.PENDING.value,
+                'file_count': len(saved_paths),
+                'message': 'Upload received; processing in background.',
+            },
+            HTTPStatus.ACCEPTED,
+        )
 
 
 def _field_value(fields: Dict[str, List[str]], name: str) -> Optional[str]:
@@ -480,6 +644,8 @@ def run_server(
 
     SonarUploadHandler.uploads_root = uploads_root
     SonarUploadHandler.output_root = output_root
+    SonarUploadHandler.jobs = {}
+    SonarUploadHandler.jobs_lock = threading.Lock()
 
     server = ThreadingHTTPServer((host, port), SonarUploadHandler)
     url = f'http://{host}:{port}/'
