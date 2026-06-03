@@ -8,6 +8,7 @@ Uses only the Python standard library (no pip dependencies).
 from __future__ import annotations
 
 import argparse
+import cgi
 import os
 import json
 import logging
@@ -38,10 +39,10 @@ from survey_database import (
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB per request
-APP_BUILD_ID = '2026.06.03-job-recovery'
+APP_BUILD_ID = '2026.06.03-upload-speed'
 # Hosted (Railway) web uploads: stream to disk; avoid loading huge bodies in RAM.
 WEB_UPLOAD_MAX_BYTES = 150 * 1024 * 1024  # 150 MB per request on public UI
-READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
+READ_CHUNK_SIZE = 4 * 1024 * 1024  # 4 MiB
 MAX_RETAINED_JOBS = 100
 JOB_POLL_INTERVAL_SEC = 2
 
@@ -349,16 +350,69 @@ def _parse_request_form_data_streaming(
             f'{WEB_UPLOAD_MAX_BYTES // (1024 * 1024)} MB per request. '
             'Convert locally with: python sonar_cli.py convert yourfile.RSD'
         )
+    return _parse_multipart_form_data_streaming(content_type_header, rfile, content_length, uploads_root)
 
-    body = bytearray()
-    remaining = content_length
-    while remaining > 0:
-        chunk = rfile.read(min(READ_CHUNK_SIZE, remaining))
-        if not chunk:
-            raise ValueError('Upload ended unexpectedly (connection closed)')
-        body.extend(chunk)
-        remaining -= len(chunk)
-    return _parse_multipart_form_data(boundary, bytes(body), uploads_root)
+
+def _parse_multipart_form_data_streaming(
+    content_type_header: str,
+    rfile,
+    content_length: int,
+    uploads_root: Path,
+) -> Tuple[Dict[str, List[str]], List[Path]]:
+    """
+    Stream multipart upload parsing from socket via cgi.FieldStorage.
+
+    This avoids building one giant in-memory request body before extracting
+    individual files, which improves throughput and memory pressure for large
+    uploads.
+    """
+    uploads_root.mkdir(parents=True, exist_ok=True)
+    batch_dir = uploads_root / uuid.uuid4().hex[:12]
+    batch_dir.mkdir(parents=True, exist_ok=True)
+
+    environ = {
+        'REQUEST_METHOD': 'POST',
+        'CONTENT_TYPE': content_type_header,
+        'CONTENT_LENGTH': str(content_length),
+    }
+    headers = {
+        'content-type': content_type_header,
+        'content-length': str(content_length),
+    }
+    form = cgi.FieldStorage(
+        fp=rfile,
+        headers=headers,
+        environ=environ,
+        keep_blank_values=True,
+    )
+
+    fields: Dict[str, List[str]] = {}
+    saved: List[Path] = []
+    entries = form.list or []
+    for entry in entries:
+        field_name = entry.name
+        if not field_name:
+            continue
+        filename = entry.filename
+        if filename:
+            safe_name = Path(filename).name
+            lower_name = safe_name.lower()
+            if not (lower_name.endswith('.rsd') or lower_name.endswith('.csv')):
+                continue
+            source = entry.file
+            if source is None:
+                continue
+            dest = batch_dir / safe_name
+            with open(dest, 'wb') as out:
+                while True:
+                    chunk = source.read(READ_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+            saved.append(dest)
+        else:
+            fields.setdefault(field_name, []).append(str(entry.value))
+    return fields, saved
 
 
 
