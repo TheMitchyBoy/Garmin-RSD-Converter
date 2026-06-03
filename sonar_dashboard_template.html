@@ -672,7 +672,6 @@
       drawEchogram(idx);
       if (cursorPing.lat != null && cursorPing.lon != null) setPingMarker(cursorPing.lat, cursorPing.lon);
     }
-
     function centerViewOnPing(pingIdx) {
       if (pingIdx == null || pingIdx < 0 || pingIdx >= pingData.length) return;
       const span = Math.max(25, Math.min(pingData.length, Math.ceil(viewEnd - viewStart)));
