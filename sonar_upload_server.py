@@ -127,11 +127,14 @@ def _summary_to_payload(summary, session_dir: Path) -> Dict[str, Any]:
     session_id = session_dir.name
     results = []
     dashboard_urls: List[str] = []
+    seabed_3d_urls: List[str] = []
     for item in summary.results:
         artifacts = _build_artifacts(session_dir, item)
         for artifact in artifacts:
             if artifact['type'] == 'dashboard':
                 dashboard_urls.append(artifact['url'])
+            elif artifact['type'] == 'seabed_3d':
+                seabed_3d_urls.append(artifact['url'])
         results.append({
             'name': item.input_path.name,
             'success': item.success,
@@ -149,6 +152,8 @@ def _summary_to_payload(summary, session_dir: Path) -> Dict[str, Any]:
     }
     if dashboard_urls:
         payload['dashboard_url'] = dashboard_urls[0]
+    if seabed_3d_urls:
+        payload['seabed_3d_url'] = seabed_3d_urls[0]
     return payload
 
 
@@ -200,6 +205,7 @@ def _completed_job_payload_from_upload(upload: Dict[str, Any], output_root: Path
         ('csv_path', 'csv', 'Sonar CSV'),
         ('fish_geojson_path', 'geojson', 'Fish detections (GeoJSON)'),
         ('depth_geojson_path', 'geojson', 'Depth layer (GeoJSON)'),
+        ('seabed_3d_path', 'seabed_3d', '3D seabed chart'),
     ):
         artifact = _artifact_from_upload_record(
             upload,
@@ -210,6 +216,23 @@ def _completed_job_payload_from_upload(upload: Dict[str, Any], output_root: Path
         )
         if artifact:
             artifacts.append(artifact)
+
+    # Include generated chart/report files even if database schema predates those columns.
+    session_dir = output_root / session_id
+    if session_dir.is_dir():
+        known_paths = {a.get('path') for a in artifacts}
+        for pattern in ('seabed_3d*.html', '3d_seabed*.html'):
+            for path in sorted(session_dir.glob(pattern)):
+                rel = path.name
+                if rel in known_paths:
+                    continue
+                artifacts.append({
+                    'type': 'seabed_3d',
+                    'label': '3D seabed chart',
+                    'path': rel,
+                    'url': f'/results/{session_id}/{quote(rel, safe="/")}',
+                })
+                known_paths.add(rel)
 
     payload: Dict[str, Any] = {
         'total': 1,
@@ -229,6 +252,9 @@ def _completed_job_payload_from_upload(upload: Dict[str, Any], output_root: Path
     dashboard = next((a for a in artifacts if a['type'] == 'dashboard'), None)
     if dashboard:
         payload['dashboard_url'] = dashboard['url']
+    seabed_3d = next((a for a in artifacts if a['type'] == 'seabed_3d'), None)
+    if seabed_3d:
+        payload['seabed_3d_url'] = seabed_3d['url']
     return payload
 
 
