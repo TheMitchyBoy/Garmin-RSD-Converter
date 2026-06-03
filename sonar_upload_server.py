@@ -28,6 +28,7 @@ from batch_processor import batch_process_uploads, format_batch_summary
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB per request
+APP_BUILD_ID = '2026.06.03-rsd-csv'
 # Hosted (Railway) web uploads: stream to disk; avoid loading huge bodies in RAM.
 WEB_UPLOAD_MAX_BYTES = 150 * 1024 * 1024  # 150 MB per request on public UI
 READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
@@ -202,6 +203,7 @@ def _upload_page_html(port: int) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <title>Garmin Sonar Survey Upload</title>
   <style>
     :root {{
@@ -322,6 +324,7 @@ def _upload_page_html(port: int) -> str:
 
     <button type="button" id="submitBtn" disabled>Upload and process</button>
     <div id="status"></div>
+    <p class="deploy-version" style="margin-top:1.5rem;font-size:0.75rem;color:var(--muted);">Build: 2026.06.03-rsd-csv · accepts .RSD + .CSV</p>
   </div>
   <script>
     const dropzone = document.getElementById('dropzone');
@@ -494,7 +497,7 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
     output_root: Path
     jobs: Dict[str, ProcessingJob]
     jobs_lock: threading.Lock
-    server_version = 'SonarUpload/1.1'
+    server_version = 'SonarUpload/1.2'
 
     def log_message(self, fmt: str, *args) -> None:
         logger.info('%s - %s', self.address_string(), fmt % args)
@@ -512,6 +515,9 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+        self.send_header('Pragma', 'no-cache')
+        self.end_header('Expires', '0')
         self.end_headers()
         self.wfile.write(body)
 
@@ -523,6 +529,14 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == '/api/health':
             self._send_json({'status': 'ok'})
+            return
+        if parsed.path == '/api/version':
+            self._send_json({
+                'build': APP_BUILD_ID,
+                'server': self.server_version,
+                'accepts': ['.rsd', '.csv'],
+                'features': ['async_jobs', 'csv_analysis', 'streaming_upload'],
+            })
             return
         if parsed.path.startswith('/api/jobs/'):
             job_id = parsed.path[len('/api/jobs/'):].strip('/')
