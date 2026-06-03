@@ -2,8 +2,16 @@
 """
 Garmin RSD conversion via PINGVerter (pingverter package).
 
-Uses the documented Garmin RSD parser from PINGVerter instead of heuristic
-byte-offset scanning. Converts decoded ping metadata to the project's CSV schema.
+This module is the core conversion layer. It wraps PINGVerter's ``gar`` class,
+which implements the documented Garmin RSD binary format (see Herbert Oppmann's
+format notes), and normalizes decoded pings into the project's CSV schema.
+
+Multi-channel RSD files produce one row per *sequence* (shared timestamp),
+preferring down-looking beams (1=Traditional CHIRP, 4=Down Imaging) for depth
+and GPS so track/bathymetry exports are not duplicated per side-scan channel.
+
+Intensity columns are derived from raw uint16 sample arrays when PINGVerter
+can extract them; otherwise those fields are left blank.
 """
 
 from __future__ import annotations
@@ -37,6 +45,9 @@ PROJECT_CSV_FIELDS = [
     'time_s',
 ]
 
+# Beam priority when collapsing multi-channel pings to one track row.
+# Lower index = higher priority. Down-looking beams give the best depth/GPS
+# for bathymetry; side-scan channels (2/3) are fallbacks only.
 PREFERRED_BEAMS = (1, 4, 0, 2, 3)
 
 
@@ -56,7 +67,15 @@ def parse_rsd_with_pingverter(
     export_unknown: bool = False,
     meta_dir: Optional[Path] = None,
 ):
-    """Parse a Garmin RSD file and return an initialized pingverter.gar instance."""
+    """
+    Parse a Garmin RSD file and return an initialized pingverter.gar instance.
+
+    Runs the full PINGVerter header + ping decode pipeline:
+    file length → file header (channel info) → ping headers → record numbering.
+
+    ``meta_dir`` holds intermediate CSV/debug output from PINGVerter; callers
+    should use a temp directory and delete it after export.
+    """
     gar = _require_pingverter()
     input_file = Path(input_file)
 
@@ -106,6 +125,13 @@ def _sample_stats_for_row(
     channel_counters: Dict[int, int],
     samples_by_channel: Dict[int, List[np.ndarray]],
 ) -> Tuple[Optional[float], Optional[float], int]:
+    """
+    Look up raw sonar samples for one ping row.
+
+    ``extract_raw_sample_arrays`` returns arrays grouped by channel_id in ping
+    order; ``channel_counters`` tracks how many rows we've consumed per channel
+    so stats align with the correct ping when iterating the dataframe.
+    """
     try:
         channel_id = int(row['channel_id'])
     except (KeyError, TypeError, ValueError):
@@ -199,7 +225,13 @@ def _row_to_csv_dict(
 
 
 def _select_track_rows(df):
-    """One row per sonar sequence, preferring down-looking beams for depth/GPS."""
+    """
+    Collapse multi-channel pings to one row per ``sequence_cnt``.
+
+    Garmin RSD files often contain parallel channels (CHIRP, SideVu port/star,
+    Down Imaging) at the same instant. Map/heatmap/fish tools expect a single
+    GPS track, so we pick one row per sequence using PREFERRED_BEAMS.
+    """
     import pandas as pd
 
     if 'sequence_cnt' not in df.columns:

@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-CLI tool for Garmin Sonar RSD conversion and analysis
+CLI tool for Garmin Sonar RSD conversion and analysis.
+
+Entry point for all user-facing workflows. Conversion delegates to PINGVerter
+(via pingverter_adapter / sonar_converter_streaming); downstream commands
+(heatmap, fish, dashboard, merge, compare) operate on normalized CSV.
+
+Run ``python sonar_cli.py --help`` or see README.md for the full command list.
 """
 
 import argparse
@@ -17,6 +23,7 @@ from population_health import PopulationHealthAnalytics
 from web_visualizer import WebVisualizer
 from survey_tools import merge_csv_files, compare_surveys, compute_track_quality, format_quality_report
 from export_tools import generate_map_exports
+from sonar_playback import generate_playback
 from batch_processor import (
     batch_convert,
     batch_pipeline,
@@ -84,6 +91,10 @@ Examples:
 
   # Web upload UI (drag-and-drop, multiple files)
   python sonar_cli.py upload
+
+  # Live-style sonar playback video or HTML player
+  python sonar_cli.py playback Sonar000.RSD --output sonar.mp4
+  python sonar_cli.py playback Sonar000.RSD --format html --output sonar.html
         '''
     )
     
@@ -274,6 +285,36 @@ Examples:
     compare_cmd.add_argument('--grid-size', type=float, default=0.01,
                             help='Grid cell size in degrees (default: 0.01)')
 
+    # Sonar playback (live-style scrolling echogram)
+    playback_cmd = subparsers.add_parser(
+        'playback', help='Render live-style scrolling sonar playback (MP4, GIF, or HTML)',
+    )
+    playback_cmd.add_argument('input', type=str, help='Input RSD file')
+    playback_cmd.add_argument('-o', '--output', type=str, help='Output file (.mp4, .gif, or .html)')
+    playback_cmd.add_argument(
+        '--format', choices=['auto', 'mp4', 'gif', 'html'], default='auto',
+        help='Output format (default: auto from extension or ffmpeg availability)',
+    )
+    playback_cmd.add_argument('--channel', type=int, default=None, help='RSD channel id (default: best down-looking beam)')
+    playback_cmd.add_argument('--nchunk', type=int, default=500, help='PINGVerter chunk size')
+    playback_cmd.add_argument('--fps', type=float, default=10.0, help='Video/GIF frame rate')
+    playback_cmd.add_argument('--width', type=int, default=960, help='Frame width in pixels')
+    playback_cmd.add_argument('--height', type=int, default=540, help='Frame height in pixels')
+    playback_cmd.add_argument(
+        '--window', type=int, default=400, dest='window_pings',
+        help='Number of pings visible in the scrolling window',
+    )
+    playback_cmd.add_argument(
+        '--frame-step', type=int, default=1,
+        help='Advance this many pings per video frame (speeds up long recordings)',
+    )
+    playback_cmd.add_argument(
+        '--max-pings', type=int, default=None,
+        help='Limit pings loaded (useful for HTML preview of large files)',
+    )
+    playback_cmd.add_argument('--no-hud', action='store_true', help='Hide telemetry overlay in video/GIF')
+    playback_cmd.add_argument('--no-bottom-line', action='store_true', help='Hide bottom depth track line')
+
     # Upload web UI
     upload_cmd = subparsers.add_parser(
         'upload', help='Start local web UI for drag-and-drop RSD upload',
@@ -314,6 +355,8 @@ Examples:
             return cmd_compare(args)
         elif args.command == 'upload':
             return cmd_upload(args)
+        elif args.command == 'playback':
+            return cmd_playback(args)
     except Exception as e:
         logger.error(f"Error: {e}")
         return 1
@@ -751,6 +794,41 @@ def cmd_batch(args):
 
     print(format_batch_summary(summary))
     return 0 if summary.failed == 0 else 1
+
+
+def cmd_playback(args):
+    """Render live-style scrolling sonar playback from an RSD file."""
+    input_file = Path(args.input)
+    if not input_file.exists():
+        logger.error(f'File not found: {input_file}')
+        return 1
+
+    output_file = Path(args.output) if args.output else None
+    logger.info(f'Rendering playback for {input_file}...')
+
+    out_path = generate_playback(
+        input_file,
+        output_file=output_file,
+        fmt=args.format,
+        channel_id=args.channel,
+        nchunk=args.nchunk,
+        fps=args.fps,
+        width=args.width,
+        height=args.height,
+        window_pings=args.window_pings,
+        frame_step=args.frame_step,
+        max_pings=args.max_pings,
+        hud=not args.no_hud,
+        bottom_line=not args.no_bottom_line,
+    )
+
+    print('✓ Sonar playback complete!')
+    print(f'  Output: {out_path}')
+    if out_path.suffix.lower() == '.html':
+        print('  Open the HTML file in a browser for interactive play/pause and scrubbing.')
+    elif out_path.suffix.lower() == '.mp4':
+        print('  MP4 uses Garmin-style palette with scrolling time axis like live sonar.')
+    return 0
 
 
 def cmd_upload(args):

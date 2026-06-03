@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
 Survey merge, comparison, and track quality scoring utilities.
+
+These modules operate on normalized project CSV (post-PINGVerter), not raw RSD:
+
+- ``merge_csv_files`` — concatenate multiple survey CSVs (same header required)
+- ``compare_surveys`` — grid-subtract bathymetry (survey B minus A) as GeoJSON
+- ``compute_track_quality`` — 0–100 score for GPS/data completeness before mapping
 """
 
 from __future__ import annotations
@@ -236,6 +242,7 @@ def compute_track_quality(csv_file: Path) -> Dict:
 
     completeness = (gps_pct * 0.4 + depth_pct * 0.35 + intensity_pct * 0.25)
 
+    # Penalize large gaps in frame_number (may indicate dropped pings or bad merge)
     continuity = 100.0
     if frame_gaps:
         avg_gap = sum(frame_gaps) / len(frame_gaps)
@@ -246,6 +253,7 @@ def compute_track_quality(csv_file: Path) -> Dict:
     if speeds_m_s:
         mean_speed = sum(speeds_m_s) / len(speeds_m_s)
         for s in speeds_m_s:
+            # Flag jumps >5× mean and >500 m between consecutive GPS points
             if mean_speed > 0 and s > mean_speed * 5 and s > 500:
                 speed_outliers += 1
         if speeds_m_s:

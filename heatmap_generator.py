@@ -82,8 +82,9 @@ class HeatmapGenerator:
         """
         Build a sparse depth grid keyed by (grid_x, grid_y) -> average depth (m).
 
-        Returns:
-            Tuple of (grid dict, metadata with min/max grid indices and depth range)
+        Shared by depth heatmaps, contour generation, GeoTIFF export, and
+        survey comparison. Returns grid dict plus metadata (min/max indices and
+        depth range) for raster sizing and legend scaling.
         """
         grid: Dict[Tuple[int, int], GridCell] = {}
 
@@ -236,7 +237,7 @@ class HeatmapGenerator:
         min_gy: int,
         grid_size: float,
     ) -> List[List[List[float]]]:
-        """Extract contour line segments at a given level from a 2D scalar field."""
+        """Extract contour line segments at a given depth level from a 2D scalar field."""
         height = len(field)
         width = len(field[0]) if height else 0
         segments: List[List[List[float]]] = []
@@ -272,6 +273,7 @@ class HeatmapGenerator:
                 v2 = val_at(col + 1, row + 1)
                 v3 = val_at(col, row + 1)
 
+                # Classic marching squares: 4-bit case index from corner comparisons
                 case = 0
                 if v0 >= level:
                     case |= 1

@@ -304,7 +304,12 @@ class FishDetector:
         output_file: Path,
         proximity_threshold: float = 0.01,
     ) -> Path:
-        """Export identified fish schools as GeoJSON point features."""
+        """
+        Export identified fish schools as GeoJSON point features.
+
+        Wraps ``detect_fish_schools`` and writes one Point per cluster center
+        with detection count and average depth/intensity properties.
+        """
         schools = FishDetector.detect_fish_schools(detections, proximity_threshold)
         features = []
         for idx, school in enumerate(schools, start=1):
@@ -344,7 +349,12 @@ class FishDetector:
         output_file: Path,
         grid_size: float = 0.01,
     ) -> Path:
-        """Export fish detection aggregates as GeoJSON grid polygons."""
+        """
+        Export fish detection aggregates as GeoJSON grid polygons.
+
+        Each cell summarizes detection count and average intensity/depth for
+        hotspot mapping (complements point-level ``detect`` output).
+        """
         from map_visuals import grid_cell_polygon
 
         aggregated = FishDetector.aggregate_fish_by_location(detections, grid_size)
