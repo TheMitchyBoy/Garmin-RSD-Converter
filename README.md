@@ -1,6 +1,6 @@
 # Garmin Sonar RSD Converter
 
-Convert Garmin `.RSD` sonar recordings into CSV, interactive maps, bathymetry exports, fish reports, and shareable HTML dashboards.
+Convert Garmin `.RSD` sonar recordings into CSV, interactive maps, bathymetry exports, fish reports, shareable HTML dashboards, and **live-style sonar playback** you can watch like the unit display.
 
 Built for anglers, lake surveyors, and anyone who wants to turn Garmin fish-finder recordings into GIS-friendly data without proprietary desktop software.
 
@@ -12,6 +12,7 @@ Built for anglers, lake surveyors, and anyone who wants to turn Garmin fish-find
 flowchart LR
     RSD[Garmin .RSD file] --> PV[PINGVerter decoder]
     PV --> CSV[Project CSV]
+    PV --> Play[Scrolling sonar playback]
     CSV --> Maps[Tracks & 3D exports]
     CSV --> Heat[Heatmaps & contours]
     CSV --> Fish[Fish detection]
@@ -78,6 +79,13 @@ Optional for LAZ compression:
 # Install laszip CLI separately if you want --maps laz output
 ```
 
+Optional for MP4 sonar playback video:
+
+```bash
+# ffmpeg must be on your PATH for .mp4 output
+ffmpeg -version
+```
+
 ---
 
 ## Quick start
@@ -94,7 +102,111 @@ python sonar_cli.py analyze Sonar000.csv --quality
 
 # 4. Full pipeline (CSV + maps + heatmaps + fish + dashboard)
 python sonar_cli.py pipeline Sonar000.RSD --location "Lake Survey"
+
+# 5. Watch the recorded sonar feed (scrolling echogram)
+python sonar_cli.py playback Sonar000.RSD --output sonar.html
 ```
+
+---
+
+## Using your recorded sonar feed
+
+Garmin units save sonar **recordings** as `.RSD` files on the chartplotter or fish finder. These files contain the raw ping-by-ping echogram data (what you saw scrolling on screen while recording), plus GPS, depth, temperature, and channel metadata.
+
+### 1. Get the RSD file off your unit
+
+Copy the recording from your Garmin device to your computer. Typical locations depend on model and storage:
+
+| Source | Where to look |
+|--------|----------------|
+| SD/microSD card | `Garmin/` folder on the removable card — look for `Sonar*.RSD` or similar |
+| Connected via USB | Device mass-storage mode — browse the unit's internal or SD storage for `.RSD` files |
+| Already exported | Any folder where you copied recordings after a trip |
+
+File names are often sequential (`Sonar000.RSD`, `Sonar001.RSD`, …). Each file is one recording session.
+
+### 2. Validate before you process
+
+```bash
+python sonar_cli.py convert Sonar000.RSD --validate
+```
+
+This decodes the file and reports GPS, depth, and sample coverage. If the score is low, the recording may be incomplete or missing a GPS fix — playback may still work, but maps will be limited.
+
+### 3. Watch the recording (live-style playback)
+
+The `playback` command rebuilds the scrolling waterfall echogram from the raw pings — depth runs **top to bottom**, time scrolls **left to right** as new pings arrive, using Garmin-style colors.
+
+**Interactive HTML player (recommended — no extra software):**
+
+```bash
+python sonar_cli.py playback Sonar000.RSD --format html --output sonar.html
+```
+
+Open `sonar.html` in any web browser. Use **Play/Pause**, drag the scrub bar to jump to any moment, and adjust playback speed.
+
+**Shareable video (requires ffmpeg):**
+
+```bash
+python sonar_cli.py playback Sonar000.RSD --output sonar.mp4
+```
+
+**Animated GIF (no ffmpeg needed):**
+
+```bash
+python sonar_cli.py playback Sonar000.RSD --format gif --output sonar.gif
+```
+
+### 4. Reading the playback display
+
+| Element | What it shows |
+|---------|----------------|
+| **Color waterfall** | Sonar return intensity — dark blue is weak, yellow/red/white is strong (fish, hard bottom, structure) |
+| **Yellow bottom line** | Tracked lake/sea floor depth over time |
+| **Top telemetry bar** | Channel name, depth, water temperature, elapsed recording time, ping counter |
+| **Horizontal axis** | Time — newest pings appear on the right as the view scrolls |
+| **Vertical axis** | Range below the transducer (deeper toward the bottom of the screen) |
+
+By default the tool picks the best **down-looking** channel (Traditional CHIRP or Down Imaging). Multi-channel recordings may also include SideVu; pick a specific channel with `--channel` if needed.
+
+### 5. Playback options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format` | `auto` | `html`, `mp4`, `gif`, or `auto` (from file extension / ffmpeg availability) |
+| `-o`, `--output` | `<input>.mp4` or `.html` | Output file path |
+| `--window` | `400` | How many pings are visible in the scrolling window |
+| `--fps` | `10` | Frames per second for MP4/GIF |
+| `--frame-step` | `1` | Pings advanced per frame — use `2` or `5` to shorten long recordings |
+| `--width` / `--height` | `960` × `540` | Output resolution |
+| `--max-pings` | all | Cap pings loaded (useful for quick HTML previews of huge files) |
+| `--channel` | auto | Force a specific Garmin channel ID |
+| `--no-hud` | off | Hide the telemetry bar (video/GIF only) |
+| `--no-bottom-line` | off | Hide the bottom depth track line |
+
+**Examples:**
+
+```bash
+# Quick preview of the first 2,000 pings
+python sonar_cli.py playback Sonar000.RSD --format html --max-pings 2000 -o preview.html
+
+# Faster MP4 export for a long day on the water
+python sonar_cli.py playback Sonar000.RSD -o survey.mp4 --frame-step 3 --fps 15
+
+# Wider scrolling window (more history on screen)
+python sonar_cli.py playback Sonar000.RSD -o sonar.mp4 --window 600
+```
+
+### 6. Convert the feed for maps and analysis
+
+Playback is for **watching** the recording. To build maps, heatmaps, fish reports, or bathymetry exports, convert the same RSD file to CSV first:
+
+```bash
+python sonar_cli.py convert Sonar000.RSD --maps all
+python sonar_cli.py pipeline Sonar000.RSD --location "Lake Survey"
+```
+
+The CSV holds GPS track points, depth, and intensity statistics — one row per sonar ping sequence. All analysis commands (`heatmap`, `fish`, `dashboard`, etc.) run from that CSV.
 
 ---
 
