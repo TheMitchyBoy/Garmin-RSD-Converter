@@ -217,8 +217,19 @@ def _upload_page_html(port: int) -> str:
 
       try {{
         const res = await fetch('/api/process', {{ method: 'POST', body: form }});
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Processing failed');
+        const raw = await res.text();
+        let data = {{}};
+        if (raw) {{
+          try {{
+            data = JSON.parse(raw);
+          }} catch (_) {{
+            if (res.ok) {{
+              throw new Error('Server returned an invalid response format.');
+            }}
+            throw new Error(raw.trim() || `Request failed with status ${{res.status}}`);
+          }}
+        }}
+        if (!res.ok) throw new Error(data.error || `Request failed with status ${{res.status}}`);
         let html = `Done: ${{data.succeeded}}/${{data.total}} succeeded\\n`;
         html += `Output folder: ${{data.output_dir}}\\n\\n`;
         (data.results || []).forEach(r => {{
