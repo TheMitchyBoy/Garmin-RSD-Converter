@@ -158,13 +158,19 @@
             <label for="echoClutter">Clutter reject</label>
             <input id="echoClutter" type="range" min="0" max="100" step="5" value="35">
             <span class="tuning-value" id="echoClutterValue">35%</span>
+            <button type="button" class="btn btn-secondary" id="echoDepthIn">Depth +</button>
+            <button type="button" class="btn btn-secondary" id="echoDepthOut">Depth -</button>
+            <button type="button" class="btn btn-secondary" id="echoDepthUp">Depth ↑</button>
+            <button type="button" class="btn btn-secondary" id="echoDepthDown">Depth ↓</button>
+            <button type="button" class="btn btn-secondary" id="echoDepthReset">Full depth</button>
             <button type="button" class="btn btn-secondary" id="echoUnlock">Unlock cursor</button>
           </div>
           <div class="echogram-wrap">
           <canvas id="echogram" width="1200" height="420" aria-label="Sonar echogram with perspective modes"></canvas>
           <div class="echogram-hud" id="echoHud">Ping — · depth — m</div>
           </div>
-          <p class="echogram-note">Tip: start with <strong>Waterfall</strong>, use <strong>Bottom-lock</strong> for fish close to seabed, compare <strong>Contrast</strong> and <strong>Change</strong> for weak targets, then tune <strong>HomePort palette, gain, and clutter reject</strong> to match legacy sonar reading style. Clicking the echogram locks the cursor at that exact fish spot for labeling.</p>
+          <p class="echogram-note">Tip: start with <strong>Waterfall</strong>, use <strong>Bottom-lock</strong> for fish close to seabed, compare <strong>Contrast</strong> and <strong>Change</strong> for weak targets, then tune <strong>HomePort palette, gain, and clutter reject</strong> to match legacy sonar reading style. Use <strong>Shift + wheel</strong> to zoom depth and <strong>Shift + drag</strong> to pan from surface to bottom. Clicking the echogram locks the cursor at that exact fish spot for labeling.</p>
+          <p class="echogram-note">Tip: start with <strong>Waterfall</strong>, use <strong>Bottom-lock</strong> for fish close to seabed, compare <strong>Contrast</strong> and <strong>Change</strong> for weak targets, then tune <strong>HomePort palette, gain, and clutter reject</strong> to match legacy sonar reading style. Use <strong>Shift + wheel</strong> to zoom depth and <strong>Shift + drag</strong> to pan from surface to bottom. Clicking the echogram locks the cursor at that exact fish spot for labeling.</p>
         </div>
       </div>
     </section>
@@ -310,6 +316,7 @@
 
     const VIEW_ROWS = 220;
     const BOTTOM_LOCK_ROW_FRACTION = 0.78;
+    const MIN_DEPTH_WINDOW_FRAC = 0.06;
     const PERSPECTIVE_LABELS = {
       waterfall: 'Waterfall',
       bottom_lock: 'Bottom-lock',
@@ -374,8 +381,13 @@
     let highlightIdx = -1;
     let lockedCursor = null;
     let isPanning = false;
+    let panMode = 'time';
     let panStartX = 0;
+    let panStartY = 0;
     let panStartView = [0, 0];
+    let panStartDepth = [0, 1];
+    let depthViewMinFrac = 0;
+    let depthViewMaxFrac = 1;
     let currentPerspective = perspectiveSelect ? perspectiveSelect.value : 'waterfall';
     let currentPalette = paletteSelect ? paletteSelect.value : 'homeport_blue';
     let gainDb = gainInput ? Number(gainInput.value || 0) : 0;
@@ -420,6 +432,45 @@
       const start = Math.max(0, Math.floor(viewStart));
       const end = Math.min(pingData.length, Math.ceil(viewEnd));
       return { start, end, slice: pingData.slice(start, end) };
+    }
+
+    function setDepthWindow(minFrac, maxFrac) {
+      let min = Number.isFinite(minFrac) ? minFrac : 0;
+      let max = Number.isFinite(maxFrac) ? maxFrac : 1;
+      let span = Math.max(MIN_DEPTH_WINDOW_FRAC, Math.min(1, max - min));
+      if (min < 0) { max -= min; min = 0; }
+      if (max > 1) { min -= (max - 1); max = 1; }
+      min = Math.max(0, min);
+      max = Math.min(1, max);
+      if ((max - min) < span) {
+        max = min + span;
+        if (max > 1) {
+          max = 1;
+          min = Math.max(0, max - span);
+        }
+      }
+      depthViewMinFrac = Math.max(0, Math.min(1 - MIN_DEPTH_WINDOW_FRAC, min));
+      depthViewMaxFrac = Math.max(depthViewMinFrac + MIN_DEPTH_WINDOW_FRAC, Math.min(1, max));
+    }
+
+    function depthWindowRows() {
+      const maxRow = VIEW_ROWS - 1;
+      const start = depthViewMinFrac * maxRow;
+      const end = depthViewMaxFrac * maxRow;
+      return { start, end, span: Math.max(1, end - start) };
+    }
+
+    function canvasYToSourceRow(py) {
+      const h = Math.max(1, canvas.height);
+      const yFrac = Math.max(0, Math.min(1, py / h));
+      const win = depthWindowRows();
+      return win.start + (yFrac * win.span);
+    }
+
+    function sourceRowToCanvasY(row) {
+      const h = canvas.height;
+      const win = depthWindowRows();
+      return ((row - win.start) / Math.max(1e-6, win.span)) * h;
     }
 
     function computeSliceScales(slice) {
@@ -586,10 +637,11 @@
       const h = canvas.height;
       const n = columns.length;
       if (!n) return null;
+      const win = depthWindowRows();
       const image = ctx.createImageData(w, h);
       const data = image.data;
       for (let y = 0; y < h; y++) {
-        const row = Math.max(0, Math.min(VIEW_ROWS - 1, Math.floor((y / Math.max(1, h - 1)) * (VIEW_ROWS - 1))));
+        const row = Math.max(0, Math.min(VIEW_ROWS - 1, Math.floor(win.start + (y / Math.max(1, h - 1)) * win.span)));
         for (let x = 0; x < w; x++) {
           const col = Math.max(0, Math.min(n - 1, Math.floor((x / w) * n)));
           const v = columns[col][row];
@@ -607,11 +659,49 @@
 
     function drawDepthScale(maxDepth) {
       const h = canvas.height;
+      const depthMin = depthViewMinFrac * maxDepth;
+      const depthMax = depthViewMaxFrac * maxDepth;
+      const depthMid = (depthMin + depthMax) * 0.5;
       ctx.fillStyle = 'rgba(230,240,255,0.9)';
       ctx.font = '11px sans-serif';
-      ctx.fillText('0 m', 4, 14);
-      ctx.fillText((maxDepth * 0.5).toFixed(1) + ' m', 4, Math.floor(h * 0.5));
-      ctx.fillText(maxDepth.toFixed(1) + ' m', 4, h - 8);
+      ctx.fillText(depthMin.toFixed(1) + ' m', 4, 14);
+      ctx.fillText(depthMid.toFixed(1) + ' m', 4, Math.floor(h * 0.5));
+      ctx.fillText(depthMax.toFixed(1) + ' m', 4, h - 8);
+    }
+
+    function drawHomePortGrid(maxDepth, startIdx, sliceLen) {
+      const w = canvas.width;
+      const h = canvas.height;
+      const depthMin = depthViewMinFrac * maxDepth;
+      const depthMax = depthViewMaxFrac * maxDepth;
+      const stepDepth = maxDepth <= 25 ? 5 : (maxDepth <= 80 ? 10 : 20);
+      ctx.strokeStyle = 'rgba(148,163,184,0.24)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      for (let d = Math.ceil(depthMin / stepDepth) * stepDepth; d < depthMax; d += stepDepth) {
+        const y = ((d / maxDepth) - depthViewMinFrac) / Math.max(1e-6, depthViewMaxFrac - depthViewMinFrac) * h;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      if (sliceLen < 2) return;
+      const pingSpacing = Math.max(25, Math.round(sliceLen / 6));
+      ctx.strokeStyle = 'rgba(148,163,184,0.17)';
+      ctx.lineWidth = 1;
+      ctx.font = '10px sans-serif';
+      ctx.fillStyle = 'rgba(203,213,225,0.65)';
+      for (let idx = Math.ceil(startIdx / pingSpacing) * pingSpacing; idx < (startIdx + sliceLen); idx += pingSpacing) {
+        const local = idx - startIdx;
+        const x = ((local + 0.5) / Math.max(1, sliceLen)) * w;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+        ctx.fillText('p' + idx, Math.min(w - 34, x + 3), h - 6);
+      }
     }
 
     function drawHomePortGrid(maxDepth, startIdx, sliceLen) {
@@ -651,10 +741,11 @@
       if (!bottomRows.length) return;
       const n = bottomRows.length;
       const w = canvas.width;
-      const h = canvas.height;
 
       if (currentPerspective === 'bottom_lock') {
-        const target = BOTTOM_LOCK_ROW_FRACTION * h;
+        const targetRow = BOTTOM_LOCK_ROW_FRACTION * (VIEW_ROWS - 1);
+        const target = sourceRowToCanvasY(targetRow);
+        if (target < 0 || target > canvas.height) return;
         ctx.strokeStyle = 'rgba(255, 215, 70, 0.9)';
         ctx.lineWidth = 1.5;
         ctx.setLineDash([6, 5]);
@@ -671,7 +762,7 @@
       ctx.beginPath();
       for (let i = 0; i < n; i++) {
         const x = ((i + 0.5) / n) * w;
-        const y = (bottomRows[i] / (VIEW_ROWS - 1)) * h;
+        const y = sourceRowToCanvasY(bottomRows[i]);
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
@@ -702,7 +793,8 @@
         displayRow = sourceRow - (bottomRows[localIdx] - targetBottomRow);
       }
       displayRow = Math.max(0, Math.min(VIEW_ROWS - 1, displayRow));
-      const y = (displayRow / (VIEW_ROWS - 1)) * h;
+      const y = sourceRowToCanvasY(displayRow);
+      if (y < 0 || y > h) return;
 
       ctx.strokeStyle = 'rgba(34, 211, 238, 0.92)';
       ctx.lineWidth = 1.6;
@@ -725,7 +817,10 @@
 
     function updateZoomLabel() {
       const n = Math.max(1, Math.ceil(viewEnd - viewStart));
-      zoomLabel.textContent = PERSPECTIVE_LABELS[currentPerspective] + ' · ' + currentPalette.replace('homeport_', '').replace('_', ' ') + ' · showing ' + n + ' of ' + totalPings + ' pings';
+      const refDepth = (lastRender && lastRender.maxDepth) ? lastRender.maxDepth : 50;
+      const depthMin = depthViewMinFrac * refDepth;
+      const depthMax = depthViewMaxFrac * refDepth;
+      zoomLabel.textContent = PERSPECTIVE_LABELS[currentPerspective] + ' · ' + currentPalette.replace('homeport_', '').replace('_', ' ') + ' · showing ' + n + ' of ' + totalPings + ' pings · depth ' + depthMin.toFixed(1) + '-' + depthMax.toFixed(1) + ' m';
     }
 
     function updateSonarControlLabels() {
@@ -739,7 +834,7 @@
       const h = canvas.height;
       const windowStart = Math.max(0, Math.floor(viewStart));
       const windowEnd = Math.min(pingData.length, Math.ceil(viewEnd));
-      const renderSignature = currentPerspective + '|' + currentPalette + '|' + gainDb + '|' + clutterReject + '|' + windowStart + '|' + windowEnd + '|' + pingData.length;
+      const renderSignature = currentPerspective + '|' + currentPalette + '|' + gainDb + '|' + clutterReject + '|' + depthViewMinFrac.toFixed(4) + '|' + depthViewMaxFrac.toFixed(4) + '|' + windowStart + '|' + windowEnd + '|' + pingData.length;
       const activeIdx = lockedCursor && lockedCursor.idx != null ? lockedCursor.idx : hIdx;
       ctx.fillStyle = '#0c1222';
       ctx.fillRect(0, 0, w, h);
@@ -856,12 +951,11 @@
 
     function pingAtCanvas(px, py) {
       const w = canvas.width;
-      const h = canvas.height;
       const slice = lastRender.slice;
       const n = slice.length;
       if (!n) return null;
       const localIdx = Math.max(0, Math.min(n - 1, Math.floor((px / w) * n)));
-      const row = Math.max(0, Math.min(VIEW_ROWS - 1, (py / h) * (VIEW_ROWS - 1)));
+      const row = Math.max(0, Math.min(VIEW_ROWS - 1, canvasYToSourceRow(py)));
       let sourceRow = row;
       if (currentPerspective === 'bottom_lock') {
         const targetBottomRow = Math.floor((VIEW_ROWS - 1) * BOTTOM_LOCK_ROW_FRACTION);
@@ -892,9 +986,32 @@
       drawEchogram(highlightIdx);
     }
 
+    function zoomDepthAt(factor, centerFracY) {
+      const span = depthViewMaxFrac - depthViewMinFrac;
+      const center = depthViewMinFrac + span * Math.max(0, Math.min(1, centerFracY));
+      let newSpan = span / factor;
+      newSpan = Math.max(MIN_DEPTH_WINDOW_FRAC, Math.min(1, newSpan));
+      setDepthWindow(center - newSpan / 2, center + newSpan / 2);
+      drawEchogram(highlightIdx);
+    }
+
+    function panDepthBy(deltaFrac) {
+      setDepthWindow(depthViewMinFrac + deltaFrac, depthViewMaxFrac + deltaFrac);
+      drawEchogram(highlightIdx);
+    }
+
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
+      const fracY = ((e.clientY - rect.top) / rect.height);
+      if (e.shiftKey) {
+        zoomDepthAt(e.deltaY < 0 ? 1.22 : 0.82, fracY);
+        return;
+      }
+      if (e.altKey) {
+        panDepthBy(e.deltaY > 0 ? 0.035 : -0.035);
+        return;
+      }
       const frac = ((e.clientX - rect.left) / rect.width);
       zoomAt(e.deltaY < 0 ? 1.35 : 0.72, frac);
     }, { passive: false });
@@ -902,19 +1019,28 @@
     canvas.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       isPanning = true;
+      panMode = e.shiftKey ? 'depth' : 'time';
       panStartX = e.clientX;
+      panStartY = e.clientY;
       panStartView = [viewStart, viewEnd];
+      panStartDepth = [depthViewMinFrac, depthViewMaxFrac];
     });
     window.addEventListener('mouseup', () => { isPanning = false; });
     window.addEventListener('mousemove', (e) => {
       if (isPanning) {
         const rect = canvas.getBoundingClientRect();
-        const span = panStartView[1] - panStartView[0];
-        const delta = ((e.clientX - panStartX) / rect.width) * span;
-        viewStart = panStartView[0] - delta;
-        viewEnd = panStartView[1] - delta;
-        if (viewStart < 0) { viewEnd -= viewStart; viewStart = 0; }
-        if (viewEnd > pingData.length) { viewStart -= (viewEnd - pingData.length); viewEnd = pingData.length; }
+        if (panMode === 'depth') {
+          const depthSpan = panStartDepth[1] - panStartDepth[0];
+          const deltaDepth = ((e.clientY - panStartY) / rect.height) * depthSpan;
+          setDepthWindow(panStartDepth[0] + deltaDepth, panStartDepth[1] + deltaDepth);
+        } else {
+          const span = panStartView[1] - panStartView[0];
+          const delta = ((e.clientX - panStartX) / rect.width) * span;
+          viewStart = panStartView[0] - delta;
+          viewEnd = panStartView[1] - delta;
+          if (viewStart < 0) { viewEnd -= viewStart; viewStart = 0; }
+          if (viewEnd > pingData.length) { viewStart -= (viewEnd - pingData.length); viewEnd = pingData.length; }
+        }
         drawEchogram(highlightIdx);
         return;
       }
@@ -974,7 +1100,22 @@
       viewEnd = pingData.length;
       drawEchogram(-1);
     });
+    document.getElementById('echoDepthIn').addEventListener('click', () => zoomDepthAt(1.35, 0.5));
+    document.getElementById('echoDepthOut').addEventListener('click', () => zoomDepthAt(0.74, 0.5));
+    document.getElementById('echoDepthUp').addEventListener('click', () => {
+      const step = (depthViewMaxFrac - depthViewMinFrac) * 0.22;
+      panDepthBy(-step);
+    });
+    document.getElementById('echoDepthDown').addEventListener('click', () => {
+      const step = (depthViewMaxFrac - depthViewMinFrac) * 0.22;
+      panDepthBy(step);
+    });
+    document.getElementById('echoDepthReset').addEventListener('click', () => {
+      setDepthWindow(0, 1);
+      drawEchogram(highlightIdx);
+    });
 
+    setDepthWindow(0, 1);
     updateSonarControlLabels();
     drawEchogram(-1);
 
