@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
 LAS / LAZ point cloud export from sonar CSV data (stdlib-only LAS writer).
+
+Writes ASPRS LAS 1.2 format-1 records (X/Y/Z + intensity). Coordinates use
+a local ENU projection from the first GPS point (via MapGenerator), with Z
+as negative depth. LAZ compression delegates to the external ``laszip`` CLI
+when available; otherwise an uncompressed .las file is kept.
 """
 
 from __future__ import annotations
@@ -114,6 +119,7 @@ class LasExporter:
         num_points = len(points)
         offset_to_points = header_size
 
+        # LAS 1.2 public header block (227 bytes); see ASPRS LAS specification
         header = bytearray(227)
         header[0:4] = b"LASF"
         struct.pack_into("<H", header, 4, 0)

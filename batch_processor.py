@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
 Discover Garmin Sonar RSD files and run bulk convert / pipeline workflows.
+
+Supports explicit file lists, directories (recursive by default), and glob
+patterns. Each RSD is decoded through PINGVerter; optional map exports and
+the full analysis pipeline mirror the single-file ``sonar_cli.py`` commands.
 """
 
 from __future__ import annotations

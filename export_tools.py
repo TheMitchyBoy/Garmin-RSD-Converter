@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Shared map and point-cloud export helpers."""
+"""
+Shared map and point-cloud export helpers.
+
+Central dispatcher for ``--maps`` on convert/batch commands. Keeps export logic
+in one place so sonar_cli.py and batch_processor.py stay thin.
+"""
 
 from __future__ import annotations
 

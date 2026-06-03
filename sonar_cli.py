@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-CLI tool for Garmin Sonar RSD conversion and analysis
+CLI tool for Garmin Sonar RSD conversion and analysis.
+
+Entry point for all user-facing workflows. Conversion delegates to PINGVerter
+(via pingverter_adapter / sonar_converter_streaming); downstream commands
+(heatmap, fish, dashboard, merge, compare) operate on normalized CSV.
+
+Run ``python sonar_cli.py --help`` or see README.md for the full command list.
 """
 
 import argparse

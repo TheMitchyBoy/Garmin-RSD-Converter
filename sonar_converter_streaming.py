@@ -2,7 +2,9 @@
 """
 Garmin Sonar RSD conversion entry point.
 
-All RSD decoding is delegated to PINGVerter via pingverter_adapter.
+All RSD decoding is delegated to PINGVerter via ``pingverter_adapter``.
+This file exists for backward compatibility with scripts that import
+``convert_sonar_rsd_to_csv`` from ``sonar_converter_streaming``.
 """
 
 from pathlib import Path

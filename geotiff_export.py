@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
 GeoTIFF bathymetry export (stdlib-only, WGS84 georeferenced).
+
+Writes a single-band Float32 TIFF with GeoTIFF tags (ModelPixelScale,
+ModelTiepoint, GeoKeyDirectory) so QGIS and GDAL can open depth grids without
+external dependencies. NoData pixels use -9999.0 for empty grid cells.
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ class GeoTiffWriter:
         width = max_gx - min_gx + 1
         height = max_gy - min_gy + 1
 
+        # Build north-up raster: rows iterate from max grid Y downward (north→south)
         pixels: List[float] = []
         for gy in range(max_gy, min_gy - 1, -1):
             for gx in range(min_gx, max_gx + 1):
