@@ -11,9 +11,12 @@ One-click-style deploy for the Garmin Sonar web app using Railway's Docker build
 ## Quick deploy
 
 1. **New Project** → **Deploy from GitHub repo** → select `Garmin-RSD-Converter`
-2. Railway detects `railway.toml` and builds from `Dockerfile`
-3. After the first deploy, open **Settings → Networking → Generate Domain**
-4. Visit the URL — you should see the sonar web app home page
+2. Railway detects `railway.toml` and builds from `Dockerfile` **or** Railpack (Python)
+3. Start command (if prompted):  
+   `python sonar_upload_server.py --host 0.0.0.0 --port $PORT`  
+   Or use the auto-detected `main.py` entry point.
+4. After the first deploy, open **Settings → Networking → Generate Domain**
+5. Visit the URL — you should see the sonar web app home page
 
 Health check: `GET /api/health` → `{"status":"ok","service":"sonar-web"}`
 
@@ -73,8 +76,20 @@ docker run --rm -p 8080:8080 -e PORT=8080 -v sonar-data:/data sonar-web
 
 ## Troubleshooting
 
-**Build fails on pip install**  
-Retry deploy — PINGVerter dependencies are large. Ensure the service has enough build memory.
+**Build uses Railpack instead of Docker / “could not detect start command”**  
+Set the start command in Railway **Settings → Deploy → Start Command**:
+
+```bash
+python sonar_upload_server.py --host 0.0.0.0 --port $PORT
+```
+
+Or simply:
+
+```bash
+python main.py
+```
+
+Both read Railway's `PORT` automatically. Redeploy after saving.
 
 **502 / health check failing**  
 Check deploy logs. The app must listen on `$PORT` (handled automatically).
