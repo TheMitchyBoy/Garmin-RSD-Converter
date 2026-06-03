@@ -8,6 +8,7 @@ Uses only the Python standard library (no pip dependencies).
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import logging
 import sys
@@ -22,11 +23,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from batch_processor import batch_convert, batch_pipeline, format_batch_summary
+from batch_processor import batch_process_uploads, format_batch_summary
 
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB per request
+# Hosted (Railway) web uploads: stream to disk; avoid loading huge bodies in RAM.
+WEB_UPLOAD_MAX_BYTES = 150 * 1024 * 1024  # 150 MB per request on public UI
+READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 MAX_RETAINED_JOBS = 100
 JOB_POLL_INTERVAL_SEC = 2
 
@@ -78,7 +82,8 @@ def _prune_old_jobs(jobs: Dict[str, ProcessingJob]) -> None:
 
 def _run_processing_job(
     job_id: str,
-    saved_paths: List[Path],
+    rsd_paths: List[Path],
+    csv_paths: List[Path],
     session_dir: Path,
     workflow: str,
     nchunk: int,
@@ -93,20 +98,15 @@ def _run_processing_job(
             job.status = JobStatus.RUNNING
 
     try:
-        if workflow == 'pipeline':
-            summary = batch_pipeline(
-                saved_paths,
-                output_dir=session_dir,
-                nchunk=nchunk,
-                location=location,
-            )
-        else:
-            summary = batch_convert(
-                saved_paths,
-                output_dir=session_dir,
-                nchunk=nchunk,
-                map_formats=map_formats,
-            )
+        summary = batch_process_uploads(
+            rsd_paths,
+            csv_paths,
+            output_dir=session_dir,
+            workflow=workflow,
+            nchunk=nchunk,
+            map_formats=map_formats,
+            location=location,
+        )
         payload = _summary_to_payload(summary, session_dir)
         logger.info(format_batch_summary(summary))
         with jobs_lock:
@@ -124,13 +124,85 @@ def _run_processing_job(
 
 
 
+def _read_request_body_to_file(rfile, content_length: int, dest: Path) -> None:
+    """Stream request body to disk in chunks (avoids one giant memory allocation)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    remaining = content_length
+    with open(dest, 'wb') as out:
+        while remaining > 0:
+            chunk = rfile.read(min(READ_CHUNK_SIZE, remaining))
+            if not chunk:
+                raise ValueError('Upload ended unexpectedly (connection closed)')
+            out.write(chunk)
+            remaining -= len(chunk)
+
+
+def _parse_request_form_data_streaming(
+    content_type_header: str,
+    rfile,
+    content_length: int,
+    uploads_root: Path,
+) -> Tuple[Dict[str, List[str]], List[Path]]:
+    content_type, params = _parse_header_value(content_type_header)
+
+    if content_type == 'application/x-www-form-urlencoded':
+        body = bytearray()
+        remaining = content_length
+        while remaining > 0:
+            chunk = rfile.read(min(READ_CHUNK_SIZE, remaining))
+            if not chunk:
+                raise ValueError('Upload ended unexpectedly (connection closed)')
+            body.extend(chunk)
+            remaining -= len(chunk)
+        decoded = bytes(body).decode('utf-8', errors='replace')
+        parsed = parse_qs(decoded, keep_blank_values=True)
+        return {key: values for key, values in parsed.items()}, []
+
+    if content_type != 'multipart/form-data':
+        raise ValueError('Unsupported Content-Type. Expected multipart/form-data upload.')
+
+    boundary = params.get('boundary')
+    if not boundary:
+        raise ValueError('Missing multipart boundary in Content-Type header.')
+
+    if content_length > WEB_UPLOAD_MAX_BYTES:
+        raise ValueError(
+            f'Upload is {content_length / (1024 * 1024):.1f} MB; the hosted converter accepts up to '
+            f'{WEB_UPLOAD_MAX_BYTES // (1024 * 1024)} MB per request. '
+            'Convert locally with: python sonar_cli.py convert yourfile.RSD'
+        )
+
+    uploads_root.mkdir(parents=True, exist_ok=True)
+    raw_path = uploads_root / f'raw-{uuid.uuid4().hex}.multipart'
+    try:
+        _read_request_body_to_file(rfile, content_length, raw_path)
+        body = raw_path.read_bytes()
+        return _parse_multipart_form_data(boundary, body, uploads_root)
+    finally:
+        raw_path.unlink(missing_ok=True)
+
+
+
+
+def _split_upload_paths(paths: List[Path]) -> Tuple[List[Path], List[Path]]:
+    rsd_paths: List[Path] = []
+    csv_paths: List[Path] = []
+    for item in paths:
+        suffix = item.suffix.lower()
+        if suffix == '.rsd':
+            rsd_paths.append(item)
+        elif suffix == '.csv':
+            csv_paths.append(item)
+    return rsd_paths, csv_paths
+
+
 def _upload_page_html(port: int) -> str:
     return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Garmin Sonar RSD Upload</title>
+  <title>Garmin Sonar Survey Upload</title>
   <style>
     :root {{
       --bg: #0f172a;
@@ -212,13 +284,13 @@ def _upload_page_html(port: int) -> str:
 </head>
 <body>
   <div class="wrap">
-    <h1>Garmin Sonar RSD Upload</h1>
-    <p class="lead">Drop one or many <code>.RSD</code> files to convert or run the full analysis pipeline.</p>
+    <h1>Garmin Sonar Survey Upload</h1>
+    <p class="lead">Upload <code>.RSD</code> recordings to convert, or <code>.CSV</code> survey files to analyze (maps, heatmaps, fish, dashboard). Hosted uploads are limited to 150&nbsp;MB per request.</p>
 
     <div class="dropzone" id="dropzone">
       <p><strong>Click or drag files here</strong></p>
-      <p>Supports multiple Garmin Sonar RSD recordings</p>
-      <input type="file" id="fileInput" accept=".rsd,.RSD" multiple>
+      <p>Supports Garmin <code>.RSD</code> and project <code>.CSV</code> files</p>
+      <input type="file" id="fileInput" accept=".rsd,.RSD,.csv,.CSV" multiple>
       <div class="file-list" id="fileList"></div>
     </div>
 
@@ -226,12 +298,12 @@ def _upload_page_html(port: int) -> str:
       <label>
         Workflow
         <select id="workflow">
-          <option value="convert">Convert to CSV (+ optional maps)</option>
-          <option value="pipeline">Full pipeline (maps, heatmaps, fish, dashboard)</option>
+          <option value="convert">RSD: convert to CSV (+ maps) · CSV: map exports</option>
+          <option value="pipeline">Full analysis (RSD convert + CSV analyze)</option>
         </select>
       </label>
       <label>
-        Map exports (convert only)
+        Map exports (RSD convert / CSV analyze)
         <select id="maps">
           <option value="">CSV only</option>
           <option value="all">All map formats (PLY, GeoJSON, KML, GPX)</option>
@@ -258,6 +330,7 @@ def _upload_page_html(port: int) -> str:
     const submitBtn = document.getElementById('submitBtn');
     const statusEl = document.getElementById('status');
     let selectedFiles = [];
+    const WEB_UPLOAD_MAX_MB = 150;
 
     function refreshFileList() {{
       submitBtn.disabled = selectedFiles.length === 0;
@@ -272,17 +345,22 @@ def _upload_page_html(port: int) -> str:
 
     function addFiles(fileListLike) {{
       const incoming = Array.from(fileListLike).filter(f =>
-        /\\.rsd$/i.test(f.name)
+        /\.(rsd|csv)$/i.test(f.name)
       );
       if (!incoming.length) {{
-        statusEl.textContent = 'Please select .RSD files only.';
+        statusEl.textContent = 'Please select .RSD or .CSV files only.';
         return;
       }}
       const names = new Set(selectedFiles.map(f => f.name));
+      const tooLarge = incoming.filter(f => f.size > WEB_UPLOAD_MAX_MB * 1024 * 1024);
       incoming.forEach(f => {{
         if (!names.has(f.name)) selectedFiles.push(f);
       }});
       refreshFileList();
+      if (tooLarge.length) {{
+        statusEl.textContent = tooLarge.map(f => f.name).join(', ')
+          + ' exceed ' + WEB_UPLOAD_MAX_MB + ' MB for the hosted converter. Use the CLI for those files.';
+      }}
     }}
 
     dropzone.addEventListener('click', () => fileInput.click());
@@ -302,17 +380,35 @@ def _upload_page_html(port: int) -> str:
     }});
     dropzone.addEventListener('drop', e => addFiles(e.dataTransfer.files));
 
-    async function readJsonResponse(res) {{
-      const text = await res.text();
+    function networkErrorHint(context) {{
+      return context + ': connection lost (timeout, upload too large, or server restarted). '
+        + 'Keep each upload under ' + WEB_UPLOAD_MAX_MB + ' MB, or convert locally: '
+        + 'python sonar_cli.py convert yourfile.RSD';
+    }}
+
+    async function fetchJson(url, options) {{
+      let res;
       try {{
-        return JSON.parse(text);
+        res = await fetch(url, options);
+      }} catch (err) {{
+        const msg = (err && err.message) ? err.message : String(err);
+        if (msg === 'Failed to fetch' || err instanceof TypeError) {{
+          throw new Error(networkErrorHint('Request failed'));
+        }}
+        throw err;
+      }}
+      const text = await res.text();
+      let data;
+      try {{
+        data = JSON.parse(text);
       }} catch {{
         const proxyError = (text && /upstream/i.test(text)) || res.status === 502 || res.status === 503;
         const hint = proxyError
-          ? 'The server or proxy closed the connection (often a timeout on large files). Try again, use a smaller survey, or convert locally: python sonar_cli.py convert yourfile.RSD'
+          ? networkErrorHint('Server/proxy error')
           : `Server returned non-JSON (${{res.status}}): ${{String(text).slice(0, 200)}}`;
         throw new Error(hint);
       }}
+      return {{ res, data }};
     }}
 
     function renderResults(data) {{
@@ -343,8 +439,7 @@ def _upload_page_html(port: int) -> str:
       form.append('nchunk', document.getElementById('nchunk').value);
 
       try {{
-        const res = await fetch('/api/process', {{ method: 'POST', body: form }});
-        const data = await readJsonResponse(res);
+        const {{ res, data }} = await fetchJson('/api/process', {{ method: 'POST', body: form }});
         if (!res.ok) throw new Error(data.error || 'Upload failed');
 
         const jobId = data.job_id;
@@ -352,10 +447,19 @@ def _upload_page_html(port: int) -> str:
 
         statusEl.textContent = 'Processing… large surveys may take several minutes.';
 
+        let pollErrors = 0;
         while (true) {{
           await sleep(2000);
-          const statusRes = await fetch('/api/jobs/' + encodeURIComponent(jobId));
-          const statusData = await readJsonResponse(statusRes);
+          let statusRes, statusData;
+          try {{
+            ({{ res: statusRes, data: statusData }}) = await fetchJson('/api/jobs/' + encodeURIComponent(jobId));
+          }} catch (pollErr) {{
+            pollErrors += 1;
+            if (pollErrors >= 15) throw pollErr;
+            statusEl.textContent = 'Connection interrupted while checking status… retrying (' + pollErrors + '/15)';
+            continue;
+          }}
+          pollErrors = 0;
           if (!statusRes.ok) throw new Error(statusData.error || 'Could not read job status');
 
           if (statusData.status === 'pending' || statusData.status === 'running') {{
@@ -447,7 +551,13 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
         if urlparse(self.path).path != '/api/process':
             self._send_json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
             return
+        try:
+            self._handle_process_upload()
+        except Exception as exc:
+            logger.exception('Unhandled error in POST /api/process')
+            self._send_json({'error': str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
+    def _handle_process_upload(self) -> None:
         content_length = int(self.headers.get('Content-Length', 0))
         if content_length <= 0:
             self._send_json({'error': 'Empty request'}, HTTPStatus.BAD_REQUEST)
@@ -460,9 +570,10 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            fields, saved_paths = _parse_request_form_data(
+            fields, saved_paths = _parse_request_form_data_streaming(
                 self.headers.get('Content-Type', ''),
-                self.rfile.read(content_length),
+                self.rfile,
+                content_length,
                 self.uploads_root,
             )
         except ValueError as exc:
@@ -478,8 +589,10 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
             nchunk = 500
 
         if not saved_paths:
-            self._send_json({'error': 'No .RSD files uploaded'}, HTTPStatus.BAD_REQUEST)
+            self._send_json({'error': 'No .RSD or .CSV files uploaded'}, HTTPStatus.BAD_REQUEST)
             return
+
+        rsd_paths, csv_paths = _split_upload_paths(saved_paths)
 
         session_dir = self.output_root / uuid.uuid4().hex[:12]
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -502,7 +615,8 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
             daemon=True,
             kwargs={
                 'job_id': job_id,
-                'saved_paths': list(saved_paths),
+                'rsd_paths': list(rsd_paths),
+                'csv_paths': list(csv_paths),
                 'session_dir': session_dir,
                 'workflow': workflow,
                 'nchunk': nchunk,
@@ -619,7 +733,8 @@ def _parse_multipart_form_data(
         filename = disposition_params.get('filename')
         if filename:
             safe_name = Path(filename).name
-            if not safe_name.lower().endswith('.rsd'):
+            lower_name = safe_name.lower()
+            if not (lower_name.endswith('.rsd') or lower_name.endswith('.csv')):
                 continue
             dest = batch_dir / safe_name
             with open(dest, 'wb') as out:
