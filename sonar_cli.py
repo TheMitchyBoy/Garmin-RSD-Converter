@@ -649,6 +649,11 @@ def cmd_dashboard(args):
     if depth_file is None or not depth_file.exists():
         depth_file = HeatmapGenerator.create_depth_heatmap(csv_file, grid_size=args.grid_size)
         print(f"✓ Seabed bathymetry layer: {depth_file}")
+    seabed_3d = WebVisualizer.create_seabed_3d_chart(
+        depth_file,
+        location_name=args.location,
+    )
+    print(f"✓ 3D seabed chart: {seabed_3d}")
 
     dashboard_file = WebVisualizer.create_dashboard(
         detections_file,
@@ -726,12 +731,17 @@ def cmd_pipeline(args):
     depth_hm = HeatmapGenerator.create_depth_heatmap(csv_file, grid_size=0.01)
     temperature_hm = HeatmapGenerator.create_temperature_heatmap(csv_file, grid_size=0.01)
     print(f"✓ Heatmaps: {intensity_hm}, {depth_hm}, {temperature_hm}")
+    location_name = args.location or 'Survey Area'
+    seabed_3d = WebVisualizer.create_seabed_3d_chart(
+        depth_hm,
+        location_name=location_name,
+    )
+    print(f"✓ 3D seabed chart: {seabed_3d}")
 
     detections_file, detections = FishDetector.detect_fish(csv_file)
     print(f"✓ Fish detections: {len(detections):,} ({detections_file})")
 
     metrics = PopulationHealthAnalytics.analyze_population_metrics(detections_file)
-    location_name = args.location or 'Survey Area'
     report_file = PopulationHealthAnalytics.generate_public_report(
         metrics,
         location_name=location_name,

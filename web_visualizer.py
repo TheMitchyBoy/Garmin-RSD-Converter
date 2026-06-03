@@ -5,6 +5,7 @@ Self-contained HTML dashboard generation for sonar fish detections and seabed ma
 
 import html
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -183,6 +184,172 @@ class WebVisualizer:
             output_file=output_file,
             depth_geojson_file=depth_geojson_file,
         )
+
+    @staticmethod
+    def create_seabed_3d_chart(
+        depth_geojson_file: Path,
+        location_name: str = "Fishing Survey Area",
+        output_file: Optional[Path] = None,
+    ) -> Path:
+        """Create an interactive 3D seabed chart HTML from bathymetry GeoJSON."""
+        depth_geojson_file = Path(depth_geojson_file)
+        if not depth_geojson_file.exists():
+            raise FileNotFoundError(f"Depth GeoJSON not found: {depth_geojson_file}")
+        if output_file is None:
+            output_file = depth_geojson_file.with_name(
+                f"seabed_3d_{WebVisualizer._slugify(location_name)}.html"
+            )
+
+        with open(depth_geojson_file, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        points = WebVisualizer._extract_seabed_points(data.get("features", []))
+
+        title = html.escape(location_name)
+        if not points:
+            document = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>3D Seabed Chart · {title}</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 0; background: #0b1020; color: #e2e8f0; }}
+    main {{ max-width: 980px; margin: 0 auto; padding: 1.2rem; }}
+    .card {{ background: #111827; border: 1px solid #334155; border-radius: 12px; padding: 1rem; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>3D Seabed Chart</h1>
+    <div class="card">
+      <p>No seabed depth points were available in <code>{html.escape(depth_geojson_file.name)}</code>.</p>
+    </div>
+  </main>
+</body>
+</html>
+"""
+            with open(output_file, "w", encoding="utf-8") as handle:
+                handle.write(document)
+            return output_file
+
+        lat0 = sum(p["lat"] for p in points) / len(points)
+        lon0 = sum(p["lon"] for p in points) / len(points)
+        lat_scale = 111_320.0
+        lon_scale = 111_320.0 * max(0.2, math.cos(math.radians(lat0)))
+        x = [round((p["lon"] - lon0) * lon_scale, 3) for p in points]
+        y = [round((p["lat"] - lat0) * lat_scale, 3) for p in points]
+        z = [round(p["depth"], 3) for p in points]
+
+        stats = {
+            "point_count": len(points),
+            "min_depth": round(min(z), 2),
+            "max_depth": round(max(z), 2),
+            "median_depth": round(sorted(z)[len(z) // 2], 2),
+            "source": depth_geojson_file.name,
+            "center_lat": round(lat0, 6),
+            "center_lon": round(lon0, 6),
+        }
+
+        document = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>3D Seabed Chart · {title}</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    body {{ margin: 0; font-family: system-ui, sans-serif; background: #0b1020; color: #e2e8f0; }}
+    main {{ max-width: 1200px; margin: 0 auto; padding: 1rem; }}
+    .sub {{ color: #94a3b8; margin-top: 0.15rem; }}
+    #seabed3d {{ width: 100%; height: 72vh; min-height: 520px; border: 1px solid #334155; border-radius: 12px; background: #020617; }}
+    .meta {{ margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.65rem; color: #cbd5e1; font-size: 0.84rem; }}
+    .chip {{ border: 1px solid #334155; border-radius: 999px; padding: 0.28rem 0.58rem; background: #0f172a; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>3D Seabed Chart</h1>
+    <p class="sub">{title} · source <code>{html.escape(depth_geojson_file.name)}</code></p>
+    <div id="seabed3d" role="img" aria-label="3D seabed chart"></div>
+    <div class="meta">
+      <span class="chip">Points: {stats["point_count"]:,}</span>
+      <span class="chip">Depth range: {stats["min_depth"]}m - {stats["max_depth"]}m</span>
+      <span class="chip">Median depth: {stats["median_depth"]}m</span>
+      <span class="chip">Center: {stats["center_lat"]}, {stats["center_lon"]}</span>
+    </div>
+  </main>
+  <script>
+    const x = {json.dumps(x)};
+    const y = {json.dumps(y)};
+    const z = {json.dumps(z)};
+    const mesh = {{
+      type: 'mesh3d',
+      x, y, z,
+      intensity: z,
+      colorscale: 'Viridis',
+      reversescale: false,
+      opacity: 0.86,
+      flatshading: false,
+      lighting: {{ambient: 0.35, diffuse: 0.7, roughness: 0.95, specular: 0.08}},
+      hovertemplate: 'Depth: %{{z:.2f}} m<br>Easting: %{{x:.1f}} m<br>Northing: %{{y:.1f}} m<extra></extra>'
+    }};
+    const points = {{
+      type: 'scatter3d',
+      mode: 'markers',
+      x, y, z,
+      marker: {{size: 2.2, color: z, colorscale: 'Viridis', opacity: 0.65, showscale: false}},
+      hovertemplate: 'Depth: %{{z:.2f}} m<extra></extra>'
+    }};
+    Plotly.newPlot('seabed3d', [mesh, points], {{
+      margin: {{l: 0, r: 0, t: 0, b: 0}},
+      paper_bgcolor: '#020617',
+      scene: {{
+        bgcolor: '#020617',
+        xaxis: {{title: 'Easting (m)', color: '#cbd5e1', gridcolor: '#1e293b'}},
+        yaxis: {{title: 'Northing (m)', color: '#cbd5e1', gridcolor: '#1e293b'}},
+        zaxis: {{title: 'Depth (m)', autorange: 'reversed', color: '#cbd5e1', gridcolor: '#1e293b'}},
+        camera: {{eye: {{x: 1.28, y: -1.45, z: 0.92}}}}
+      }}
+    }}, {{responsive: true, displaylogo: false}});
+  </script>
+</body>
+</html>
+"""
+        with open(output_file, "w", encoding="utf-8") as handle:
+            handle.write(document)
+        return output_file
+
+    @staticmethod
+    def _extract_seabed_points(features: List[Dict[str, Any]]) -> List[Dict[str, float]]:
+        points: List[Dict[str, float]] = []
+        for feature in features:
+            props = feature.get("properties", {}) or {}
+            try:
+                depth = float(props.get("depth_m"))
+            except (TypeError, ValueError):
+                continue
+            if depth <= 0:
+                continue
+            geom = feature.get("geometry", {}) or {}
+            gtype = geom.get("type")
+            coords = geom.get("coordinates")
+            if gtype == "Point" and isinstance(coords, list) and len(coords) >= 2:
+                lon, lat = coords[0], coords[1]
+            elif gtype == "Polygon" and isinstance(coords, list) and coords and coords[0]:
+                ring = coords[0]
+                xs = [pt[0] for pt in ring if isinstance(pt, list) and len(pt) >= 2]
+                ys = [pt[1] for pt in ring if isinstance(pt, list) and len(pt) >= 2]
+                if not xs or not ys:
+                    continue
+                lon = sum(xs) / len(xs)
+                lat = sum(ys) / len(ys)
+            else:
+                continue
+            try:
+                points.append({"lat": float(lat), "lon": float(lon), "depth": depth})
+            except (TypeError, ValueError):
+                continue
+        return points
 
     @staticmethod
     def _build_depth_legend_html(
