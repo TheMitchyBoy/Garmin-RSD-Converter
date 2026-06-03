@@ -40,6 +40,14 @@
       gap: 0.5rem;
       margin-bottom: 0.55rem;
     }
+    .echogram-toolbar.secondary {
+      margin-top: -0.2rem;
+      margin-bottom: 0.6rem;
+      padding: 0.45rem 0.55rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #f8fafc;
+    }
     .echogram-toolbar label {
       font-size: 0.75rem;
       font-weight: 600;
@@ -54,6 +62,19 @@
       background: #fff;
       color: var(--text);
       min-width: 210px;
+    }
+    .echogram-toolbar input[type=range] {
+      width: 120px;
+      accent-color: #0d9488;
+      vertical-align: middle;
+    }
+    .tuning-value {
+      font-size: 0.74rem;
+      color: var(--muted);
+      min-width: 44px;
+      display: inline-block;
+      text-align: right;
+      margin-left: 0.2rem;
     }
     .echogram-wrap { position: relative; }
     #echogram { width: 100%; height: 420px; border-radius: 10px; border: 1px solid var(--border); cursor: crosshair; display: block; background: #0c1222; }
@@ -123,11 +144,27 @@
             <button type="button" class="btn btn-secondary" id="echoReset">Reset</button>
             <span id="echoZoomLabel">Showing — pings</span>
           </div>
+          <div class="echogram-toolbar secondary">
+            <label for="echoPalette">Palette</label>
+            <select id="echoPalette" style="min-width:170px">
+              <option value="homeport_blue" selected>HomePort blue</option>
+              <option value="homeport_amber">HomePort amber</option>
+              <option value="homeport_gray">Classic grayscale</option>
+              <option value="high_contrast">High contrast</option>
+            </select>
+            <label for="echoGain">Gain</label>
+            <input id="echoGain" type="range" min="-12" max="18" step="1" value="2">
+            <span class="tuning-value" id="echoGainValue">+2 dB</span>
+            <label for="echoClutter">Clutter reject</label>
+            <input id="echoClutter" type="range" min="0" max="100" step="5" value="35">
+            <span class="tuning-value" id="echoClutterValue">35%</span>
+            <button type="button" class="btn btn-secondary" id="echoUnlock">Unlock cursor</button>
+          </div>
           <div class="echogram-wrap">
           <canvas id="echogram" width="1200" height="420" aria-label="Sonar echogram with perspective modes"></canvas>
           <div class="echogram-hud" id="echoHud">Ping — · depth — m</div>
           </div>
-          <p class="echogram-note">Tip: start with <strong>Waterfall</strong>, use <strong>Bottom-lock</strong> for fish close to seabed, then compare <strong>Contrast</strong> and <strong>Change</strong> for weak or moving targets. Clicking the echogram locks the cursor at that exact fish spot for labeling.</p>
+          <p class="echogram-note">Tip: start with <strong>Waterfall</strong>, use <strong>Bottom-lock</strong> for fish close to seabed, then tune <strong>HomePort palette, gain, and clutter reject</strong> to match legacy sonar reading style. Clicking the echogram locks the cursor at that exact fish spot for labeling.</p>
         </div>
       </div>
     </section>
@@ -265,6 +302,11 @@
     const hud = document.getElementById('echoHud');
     const zoomLabel = document.getElementById('echoZoomLabel');
     const perspectiveSelect = document.getElementById('echoPerspective');
+    const paletteSelect = document.getElementById('echoPalette');
+    const gainInput = document.getElementById('echoGain');
+    const gainValue = document.getElementById('echoGainValue');
+    const clutterInput = document.getElementById('echoClutter');
+    const clutterValue = document.getElementById('echoClutterValue');
 
     const VIEW_ROWS = 220;
     const BOTTOM_LOCK_ROW_FRACTION = 0.78;
@@ -295,6 +337,35 @@
       [0.88, [247, 232, 102]],
       [1.0, [255, 255, 245]],
     ];
+    const SONAR_PALETTES = {
+      homeport_blue: SONAR_GRADIENT,
+      homeport_amber: [
+        [0.0, [10, 8, 6]],
+        [0.18, [55, 32, 14]],
+        [0.36, [92, 52, 18]],
+        [0.54, [148, 84, 20]],
+        [0.74, [206, 133, 33]],
+        [0.9, [240, 187, 77]],
+        [1.0, [255, 242, 194]],
+      ],
+      homeport_gray: [
+        [0.0, [8, 8, 10]],
+        [0.22, [34, 34, 40]],
+        [0.45, [70, 74, 84]],
+        [0.62, [118, 126, 136]],
+        [0.82, [172, 178, 186]],
+        [1.0, [245, 246, 248]],
+      ],
+      high_contrast: [
+        [0.0, [2, 8, 24]],
+        [0.12, [8, 36, 108]],
+        [0.3, [0, 134, 186]],
+        [0.52, [49, 194, 108]],
+        [0.7, [255, 218, 52]],
+        [0.86, [255, 120, 26]],
+        [1.0, [255, 248, 232]],
+      ],
+    };
 
     let pingData = echogramPings.slice();
     let totalPings = pingData.length;
@@ -306,6 +377,9 @@
     let panStartX = 0;
     let panStartView = [0, 0];
     let currentPerspective = perspectiveSelect ? perspectiveSelect.value : 'waterfall';
+    let currentPalette = paletteSelect ? paletteSelect.value : 'homeport_blue';
+    let gainDb = gainInput ? Number(gainInput.value || 0) : 0;
+    let clutterReject = clutterInput ? Number(clutterInput.value || 0) / 100 : 0;
     let lastRender = {
       startIndex: 0,
       slice: [],
@@ -371,6 +445,15 @@
       return clamp01((intensity - minI) / Math.max(1e-6, maxI - minI));
     }
 
+    function applyLegacyTuning(rawValue, depthRel) {
+      const gainLinear = Math.pow(10, gainDb / 20);
+      const topBias = (1 - depthRel) * 0.23;
+      const suppression = clutterReject * (0.11 + topBias);
+      const denoised = Math.max(0, rawValue - suppression);
+      const gamma = Math.max(0.72, 1.03 - clutterReject * 0.33);
+      return clamp01(Math.pow(denoised * gainLinear, gamma));
+    }
+
     function buildBaseColumns(slice, maxDepth, minI, maxI) {
       const columns = new Array(slice.length);
       const bottomRows = new Float32Array(slice.length);
@@ -398,12 +481,13 @@
             : 0;
           const shimmer = 0.02 * Math.sin((i * 0.11) + (r * 0.31));
 
-          column[r] = clamp01(
+          const rawEcho = clamp01(
             noiseFloor
             + surfaceClutter
             + iNorm * (0.6 * bottomCore + 0.22 * upwardTail + 0.17 * bottomShadow)
             + shimmer
           );
+          column[r] = applyLegacyTuning(rawEcho, depthRel);
         }
         columns[i] = column;
       }
@@ -509,7 +593,8 @@
         for (let x = 0; x < w; x++) {
           const col = Math.max(0, Math.min(n - 1, Math.floor((x / w) * n)));
           const v = columns[col][row];
-          const rgb = mode === 'change' ? sampleGradient(EDGE_GRADIENT, v) : sampleGradient(SONAR_GRADIENT, v);
+          const palette = mode === 'change' ? EDGE_GRADIENT : (SONAR_PALETTES[currentPalette] || SONAR_GRADIENT);
+          const rgb = sampleGradient(palette, v);
           const idx = (y * w + x) * 4;
           data[idx] = rgb[0];
           data[idx + 1] = rgb[1];
@@ -527,6 +612,39 @@
       ctx.fillText('0 m', 4, 14);
       ctx.fillText((maxDepth * 0.5).toFixed(1) + ' m', 4, Math.floor(h * 0.5));
       ctx.fillText(maxDepth.toFixed(1) + ' m', 4, h - 8);
+    }
+
+    function drawHomePortGrid(maxDepth, startIdx, sliceLen) {
+      const w = canvas.width;
+      const h = canvas.height;
+      const stepDepth = maxDepth <= 25 ? 5 : (maxDepth <= 80 ? 10 : 20);
+      ctx.strokeStyle = 'rgba(148,163,184,0.24)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      for (let d = stepDepth; d < maxDepth; d += stepDepth) {
+        const y = (d / maxDepth) * h;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      if (sliceLen < 2) return;
+      const pingSpacing = Math.max(25, Math.round(sliceLen / 6));
+      ctx.strokeStyle = 'rgba(148,163,184,0.17)';
+      ctx.lineWidth = 1;
+      ctx.font = '10px sans-serif';
+      ctx.fillStyle = 'rgba(203,213,225,0.65)';
+      for (let idx = Math.ceil(startIdx / pingSpacing) * pingSpacing; idx < (startIdx + sliceLen); idx += pingSpacing) {
+        const local = idx - startIdx;
+        const x = ((local + 0.5) / Math.max(1, sliceLen)) * w;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+        ctx.fillText('p' + idx, Math.min(w - 34, x + 3), h - 6);
+      }
     }
 
     function drawBottomGuide(bottomRows) {
@@ -607,7 +725,12 @@
 
     function updateZoomLabel() {
       const n = Math.max(1, Math.ceil(viewEnd - viewStart));
-      zoomLabel.textContent = PERSPECTIVE_LABELS[currentPerspective] + ' · showing ' + n + ' of ' + totalPings + ' pings · scroll to zoom, drag to pan';
+      zoomLabel.textContent = PERSPECTIVE_LABELS[currentPerspective] + ' · ' + currentPalette.replace('homeport_', '').replace('_', ' ') + ' · showing ' + n + ' of ' + totalPings + ' pings';
+    }
+
+    function updateSonarControlLabels() {
+      gainValue.textContent = (gainDb >= 0 ? '+' : '') + gainDb.toFixed(0) + ' dB';
+      clutterValue.textContent = Math.round(clutterReject * 100) + '%';
     }
 
     function drawEchogram(hIdx) {
@@ -616,7 +739,7 @@
       const h = canvas.height;
       const windowStart = Math.max(0, Math.floor(viewStart));
       const windowEnd = Math.min(pingData.length, Math.ceil(viewEnd));
-      const renderSignature = currentPerspective + '|' + windowStart + '|' + windowEnd + '|' + pingData.length;
+      const renderSignature = currentPerspective + '|' + currentPalette + '|' + gainDb + '|' + clutterReject + '|' + windowStart + '|' + windowEnd + '|' + pingData.length;
       const activeIdx = lockedCursor && lockedCursor.idx != null ? lockedCursor.idx : hIdx;
       ctx.fillStyle = '#0c1222';
       ctx.fillRect(0, 0, w, h);
@@ -642,6 +765,7 @@
       const perspectiveColumns = derivePerspective(base.columns, base.bottomRows, scales.maxDepth, currentPerspective);
       const image = renderColumns(perspectiveColumns, currentPerspective);
       if (image) ctx.putImageData(image, 0, 0);
+      drawHomePortGrid(scales.maxDepth, start, slice.length);
       drawBottomGuide(base.bottomRows);
       drawDepthScale(scales.maxDepth);
       const baseImage = ctx.getImageData(0, 0, w, h);
@@ -823,6 +947,25 @@
       currentPerspective = perspectiveSelect.value;
       drawEchogram(highlightIdx);
     });
+    paletteSelect.addEventListener('change', () => {
+      currentPalette = paletteSelect.value;
+      drawEchogram(highlightIdx);
+    });
+    gainInput.addEventListener('input', () => {
+      gainDb = Number(gainInput.value || 0);
+      updateSonarControlLabels();
+      drawEchogram(highlightIdx);
+    });
+    clutterInput.addEventListener('input', () => {
+      clutterReject = Number(clutterInput.value || 0) / 100;
+      updateSonarControlLabels();
+      drawEchogram(highlightIdx);
+    });
+    document.getElementById('echoUnlock').addEventListener('click', () => {
+      lockedCursor = null;
+      drawEchogram(highlightIdx);
+      hud.textContent = 'Cursor unlocked · move over sonar to inspect and click to relock';
+    });
 
     document.getElementById('echoZoomIn').addEventListener('click', () => zoomAt(1.5, 0.5));
     document.getElementById('echoZoomOut').addEventListener('click', () => zoomAt(0.65, 0.5));
@@ -832,6 +975,7 @@
       drawEchogram(-1);
     });
 
+    updateSonarControlLabels();
     drawEchogram(-1);
 
     if (layers.track) {
