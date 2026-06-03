@@ -297,3 +297,98 @@ class FishDetector:
         
         logger.info(f"Identified {len(schools)} fish schools")
         return schools
+
+    @staticmethod
+    def export_fish_schools_geojson(
+        detections: List[FishDetection],
+        output_file: Path,
+        proximity_threshold: float = 0.01,
+    ) -> Path:
+        """Export identified fish schools as GeoJSON point features."""
+        schools = FishDetector.detect_fish_schools(detections, proximity_threshold)
+        features = []
+        for idx, school in enumerate(schools, start=1):
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [school["center_lon"], school["center_lat"]],
+                },
+                "properties": {
+                    "layer": "fish_school",
+                    "school_id": idx,
+                    "detection_count": school["size"],
+                    "avg_depth_m": round(school["avg_depth"], 2),
+                    "avg_intensity": round(school["avg_intensity"], 2),
+                    "avg_confidence": round(school["avg_confidence"], 3),
+                    "color": FishDetector._get_size_color("school"),
+                },
+            })
+
+        geojson = {
+            "type": "FeatureCollection",
+            "properties": {
+                "school_count": len(schools),
+                "proximity_threshold_deg": proximity_threshold,
+            },
+            "features": features,
+        }
+        output_file = Path(output_file)
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(geojson, f, indent=2)
+        return output_file
+
+    @staticmethod
+    def export_fish_aggregate_geojson(
+        detections: List[FishDetection],
+        output_file: Path,
+        grid_size: float = 0.01,
+    ) -> Path:
+        """Export fish detection aggregates as GeoJSON grid polygons."""
+        from map_visuals import grid_cell_polygon
+
+        aggregated = FishDetector.aggregate_fish_by_location(detections, grid_size)
+        if not aggregated:
+            counts = [0]
+        else:
+            counts = [data["count"] for data in aggregated.values()]
+        max_count = max(counts) if counts else 1
+
+        features = []
+        for (grid_x, grid_y), data in aggregated.items():
+            lon = (grid_x + 0.5) * grid_size
+            lat = (grid_y + 0.5) * grid_size
+            t = data["count"] / max_count if max_count else 0.5
+            r = int(255 * t)
+            g = int(128 * (1 - t))
+            color = f"#{r:02x}{g:02x}40"
+
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [grid_cell_polygon(lon, lat, grid_size)],
+                },
+                "properties": {
+                    "layer": "fish_aggregate",
+                    "detection_count": data["count"],
+                    "intensity_avg": round(data["intensity_avg"], 2),
+                    "depth_avg_m": round(data["depth_avg"], 2),
+                    "confidence_avg": round(data["confidence_avg"], 3),
+                    "color": color,
+                    "fill_opacity": 0.7,
+                },
+            })
+
+        geojson = {
+            "type": "FeatureCollection",
+            "properties": {
+                "grid_size_deg": grid_size,
+                "cell_count": len(features),
+            },
+            "features": features,
+        }
+        output_file = Path(output_file)
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(geojson, f, indent=2)
+        return output_file

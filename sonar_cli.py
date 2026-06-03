@@ -9,12 +9,14 @@ import logging
 import csv
 from pathlib import Path
 
-from sonar_converter_streaming import convert_sonar_rsd_to_csv
+from sonar_converter_streaming import convert_sonar_rsd_to_csv, validate_rsd_file, format_validation_report
 from analysis_tools import MapGenerator
 from heatmap_generator import HeatmapGenerator
 from fish_detection import FishDetector
 from population_health import PopulationHealthAnalytics
 from web_visualizer import WebVisualizer
+from survey_tools import merge_csv_files, compare_surveys, compute_track_quality, format_quality_report
+from export_tools import generate_map_exports
 from batch_processor import (
     batch_convert,
     batch_pipeline,
@@ -46,7 +48,19 @@ Examples:
 
   # Detect fish signatures and create a health report
   python sonar_cli.py fish detect sonar_data.csv
-  python sonar_cli.py health sonar_data_fish_detections.geojson --report
+  python sonar_cli.py fish schools sonar_data.csv
+  python sonar_cli.py fish aggregate sonar_data.csv --grid-size 0.01
+
+  # Merge surveys or compare bathymetry changes
+  python sonar_cli.py merge survey_a.csv survey_b.csv -o combined.csv
+  python sonar_cli.py compare before.csv after.csv
+
+  # Validate RSD before converting
+  python sonar_cli.py convert Sonar000.RSD --validate
+
+  # Export GeoTIFF bathymetry or LAS point cloud
+  python sonar_cli.py convert Sonar000.RSD --maps geotiff las
+  python sonar_cli.py heatmap sonar_data.csv --depth --contours --interval 1.0
 
   # Interactive seabed + fish survey map
   python sonar_cli.py map sonar_data.csv --location "Lake Survey"
@@ -81,12 +95,21 @@ Examples:
     )
     convert_cmd.add_argument('--stride', type=int, default=256,
                            help='Sample every N bytes (default: 256)')
-    convert_cmd.add_argument('--maps', nargs='+', choices=['ply', 'geojson', 'kml', 'gpx', 'all'],
+    convert_cmd.add_argument(
+        '--validate', action='store_true',
+        help='Scan RSD file and report field validity without converting',
+    )
+    convert_cmd.add_argument('--maps', nargs='+',
+                           choices=['ply', 'geojson', 'kml', 'gpx', 'geotiff', 'tif', 'las', 'laz', 'all'],
                            help='Generate map export formats')
     
     # Analyze command
     analyze_cmd = subparsers.add_parser('analyze', help='Analyze CSV file')
     analyze_cmd.add_argument('input', help='Input CSV file')
+    analyze_cmd.add_argument(
+        '--quality', action='store_true',
+        help='Include GPS track quality score and warnings',
+    )
 
     # Heatmap command
     heatmap_cmd = subparsers.add_parser('heatmap', help='Generate heatmaps from CSV')
@@ -95,6 +118,9 @@ Examples:
     heatmap_cmd.add_argument('--depth', action='store_true', help='Generate depth heatmap')
     heatmap_cmd.add_argument('--temperature', action='store_true', help='Generate temperature heatmap')
     heatmap_cmd.add_argument('--all', action='store_true', help='Generate all heatmaps')
+    heatmap_cmd.add_argument('--contours', action='store_true', help='Generate depth contour lines (GeoJSON)')
+    heatmap_cmd.add_argument('--interval', type=float, default=1.0,
+                            help='Contour interval in meters (default: 1.0)')
     heatmap_cmd.add_argument('--grid-size', type=float, default=0.01,
                             help='Grid cell size in degrees for all heatmap types (default: 0.01)')
 
@@ -107,6 +133,22 @@ Examples:
                            help='Minimum sonar intensity (default: 40)')
     detect_cmd.add_argument('--max-intensity', type=int, default=200,
                            help='Maximum sonar intensity (default: 200)')
+
+    schools_cmd = fish_sub.add_parser('schools', help='Identify and export fish schools')
+    schools_cmd.add_argument('input', help='Input CSV file')
+    schools_cmd.add_argument('-o', '--output', help='Output GeoJSON file')
+    schools_cmd.add_argument('--proximity', type=float, default=0.01,
+                            help='Cluster proximity in degrees (default: 0.01)')
+    schools_cmd.add_argument('--min-intensity', type=int, default=40)
+    schools_cmd.add_argument('--max-intensity', type=int, default=200)
+
+    aggregate_cmd = fish_sub.add_parser('aggregate', help='Aggregate fish detections by grid cell')
+    aggregate_cmd.add_argument('input', help='Input CSV file')
+    aggregate_cmd.add_argument('-o', '--output', help='Output GeoJSON file')
+    aggregate_cmd.add_argument('--grid-size', type=float, default=0.01,
+                              help='Grid cell size in degrees (default: 0.01)')
+    aggregate_cmd.add_argument('--min-intensity', type=int, default=40)
+    aggregate_cmd.add_argument('--max-intensity', type=int, default=200)
 
     # Population health command
     health_cmd = subparsers.add_parser('health', help='Population health analysis')
@@ -174,7 +216,8 @@ Examples:
     )
     batch_convert_cmd.add_argument('--stride', type=int, default=256)
     batch_convert_cmd.add_argument(
-        '--maps', nargs='+', choices=['ply', 'geojson', 'kml', 'gpx', 'all'],
+        '--maps', nargs='+',
+        choices=['ply', 'geojson', 'kml', 'gpx', 'geotiff', 'tif', 'las', 'laz', 'all'],
         help='Generate map exports for each file',
     )
     batch_convert_cmd.add_argument(
@@ -199,6 +242,19 @@ Examples:
     batch_list_cmd = batch_sub.add_parser('list', help='List RSD files that would be processed')
     batch_list_cmd.add_argument('sources', nargs='+')
     batch_list_cmd.add_argument('--no-recursive', action='store_true')
+
+    merge_cmd = subparsers.add_parser('merge', help='Merge multiple sonar CSV files')
+    merge_cmd.add_argument('inputs', nargs='+', help='CSV files to merge')
+    merge_cmd.add_argument('-o', '--output', help='Output merged CSV path')
+
+    compare_cmd = subparsers.add_parser(
+        'compare', help='Compare bathymetry between two survey CSV files',
+    )
+    compare_cmd.add_argument('survey_a', help='Baseline survey CSV')
+    compare_cmd.add_argument('survey_b', help='Comparison survey CSV')
+    compare_cmd.add_argument('-o', '--output', help='Output GeoJSON diff file')
+    compare_cmd.add_argument('--grid-size', type=float, default=0.01,
+                            help='Grid cell size in degrees (default: 0.01)')
 
     # Upload web UI
     upload_cmd = subparsers.add_parser(
@@ -234,6 +290,10 @@ Examples:
             return cmd_pipeline(args)
         elif args.command == 'batch':
             return cmd_batch(args)
+        elif args.command == 'merge':
+            return cmd_merge(args)
+        elif args.command == 'compare':
+            return cmd_compare(args)
         elif args.command == 'upload':
             return cmd_upload(args)
     except Exception as e:
@@ -258,9 +318,14 @@ def cmd_convert(args):
         return 0 if summary.failed == 0 else 1
 
     input_file = Path(sources[0])
-    output_file = Path(args.output) if args.output else None
+
+    if getattr(args, 'validate', False):
+        report = validate_rsd_file(input_file, stride=args.stride)
+        print(format_validation_report(report))
+        return 0 if report['overall_score'] >= 50 else 1
 
     logger.info(f"Converting {input_file}...")
+    output_file = Path(args.output) if args.output else None
     csv_file, frame_count = convert_sonar_rsd_to_csv(input_file, output_file, stride=args.stride)
 
     print(f"✓ Conversion complete!")
@@ -269,23 +334,15 @@ def cmd_convert(args):
     print(f"  File size: {csv_file.stat().st_size / 1024 / 1024:.1f} MB")
 
     if args.maps:
-        formats = ['ply', 'geojson', 'kml', 'gpx'] if 'all' in args.maps else args.maps
-        logger.info(f"Generating map exports: {formats}")
-        for fmt in formats:
-            if fmt == 'ply':
-                MapGenerator.create_ply(csv_file)
-                print(f"✓ PLY 3D point cloud generated")
-            elif fmt == 'geojson':
-                MapGenerator.create_geojson(csv_file)
-                print(f"✓ GeoJSON map generated")
-            elif fmt == 'kml':
-                MapGenerator.create_kml(csv_file)
-                print(f"✓ KML track generated")
-            elif fmt == 'gpx':
-                MapGenerator.create_gpx(csv_file)
-                print(f"✓ GPX track generated")
+        _generate_map_exports(csv_file, args.maps)
 
     return 0
+
+
+def _generate_map_exports(csv_file: Path, map_formats: list) -> None:
+    """Generate requested map/point-cloud export formats from CSV."""
+    for path in generate_map_exports(csv_file, map_formats):
+        print(f"✓ Export: {path}")
 
 
 def cmd_analyze(args):
@@ -357,6 +414,10 @@ def cmd_analyze(args):
             print(f"  Lat range: {min(lats):.6f} - {max(lats):.6f}")
         if lons:
             print(f"  Lon range: {min(lons):.6f} - {max(lons):.6f}")
+
+        if getattr(args, 'quality', False):
+            quality = compute_track_quality(csv_file)
+            print(format_quality_report(quality))
         
     except Exception as e:
         logger.error(f"Error analyzing CSV: {e}")
@@ -386,9 +447,18 @@ def cmd_heatmap(args):
         print(f"✓ Depth heatmap: {output}")
 
     if args.all or args.temperature:
-        output = HeatmapGenerator.create_temperature_heatmap(csv_file)
+        output = HeatmapGenerator.create_temperature_heatmap(csv_file, grid_size=args.grid_size)
         outputs.append(output)
         print(f"✓ Temperature heatmap: {output}")
+
+    if args.contours or args.all:
+        output = HeatmapGenerator.create_depth_contours(
+            csv_file,
+            interval_m=args.interval,
+            grid_size=args.grid_size,
+        )
+        outputs.append(output)
+        print(f"✓ Depth contours: {output}")
 
     if not outputs:
         print("No heatmap type specified. Use --all or --intensity/--depth/--temperature.")
@@ -399,7 +469,7 @@ def cmd_heatmap(args):
 def cmd_fish(args):
     """Execute fish detection command"""
     if not args.fish_command:
-        print("Fish command requires a subcommand. Use: fish detect")
+        print("Fish command requires a subcommand. Use: fish detect | schools | aggregate")
         return 1
 
     if args.fish_command == 'detect':
@@ -418,6 +488,50 @@ def cmd_fish(args):
         print("✓ Fish detection complete!")
         print(f"  Total detections: {len(detections):,}")
         print(f"  Output: {output_file}")
+
+    elif args.fish_command == 'schools':
+        csv_file = Path(args.input)
+        if not csv_file.exists():
+            logger.error(f"File not found: {csv_file}")
+            return 1
+
+        _, detections = FishDetector.detect_fish(
+            csv_file,
+            min_intensity=args.min_intensity,
+            max_intensity=args.max_intensity,
+        )
+        output = Path(args.output) if args.output else csv_file.with_name(
+            f"{csv_file.stem}_fish_schools.geojson"
+        )
+        schools_file = FishDetector.export_fish_schools_geojson(
+            detections, output, proximity_threshold=args.proximity,
+        )
+        schools = FishDetector.detect_fish_schools(detections, args.proximity)
+        print("✓ Fish schools export complete!")
+        print(f"  Schools identified: {len(schools):,}")
+        print(f"  Output: {schools_file}")
+
+    elif args.fish_command == 'aggregate':
+        csv_file = Path(args.input)
+        if not csv_file.exists():
+            logger.error(f"File not found: {csv_file}")
+            return 1
+
+        _, detections = FishDetector.detect_fish(
+            csv_file,
+            min_intensity=args.min_intensity,
+            max_intensity=args.max_intensity,
+        )
+        output = Path(args.output) if args.output else csv_file.with_name(
+            f"{csv_file.stem}_fish_aggregate.geojson"
+        )
+        agg_file = FishDetector.export_fish_aggregate_geojson(
+            detections, output, grid_size=args.grid_size,
+        )
+        aggregated = FishDetector.aggregate_fish_by_location(detections, args.grid_size)
+        print("✓ Fish aggregate export complete!")
+        print(f"  Grid cells: {len(aggregated):,}")
+        print(f"  Output: {agg_file}")
 
     return 0
 
@@ -629,6 +743,43 @@ def cmd_upload(args):
         uploads_dir=args.uploads_dir,
         output_dir=args.output_dir,
     )
+    return 0
+
+
+def cmd_merge(args):
+    """Merge multiple sonar CSV files."""
+    csv_files = [Path(p) for p in args.inputs]
+    for path in csv_files:
+        if not path.exists():
+            logger.error(f"File not found: {path}")
+            return 1
+
+    output = Path(args.output) if args.output else None
+    merged = merge_csv_files(csv_files, output)
+    print("✓ CSV merge complete!")
+    print(f"  Input files: {len(csv_files)}")
+    print(f"  Output: {merged}")
+    return 0
+
+
+def cmd_compare(args):
+    """Compare bathymetry between two surveys."""
+    survey_a = Path(args.survey_a)
+    survey_b = Path(args.survey_b)
+    for path in (survey_a, survey_b):
+        if not path.exists():
+            logger.error(f"File not found: {path}")
+            return 1
+
+    output = Path(args.output) if args.output else None
+    diff_file = compare_surveys(survey_a, survey_b, args.grid_size, output)
+    data = __import__('json').loads(diff_file.read_text(encoding='utf-8'))
+    cells = data.get('properties', {}).get('cells_compared', len(data.get('features', [])))
+    print("✓ Survey comparison complete!")
+    print(f"  Baseline: {survey_a}")
+    print(f"  Compare:  {survey_b}")
+    print(f"  Cells compared: {cells}")
+    print(f"  Output: {diff_file}")
     return 0
 
 
