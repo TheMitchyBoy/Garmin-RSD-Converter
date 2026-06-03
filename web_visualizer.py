@@ -320,7 +320,7 @@ class WebVisualizer:
             f'<text x="{legend_x + 14}" y="{legend_y + 24}" fill="#0f172a" '
             'font-size="13" font-weight="700">Map legend</text>'
             + "".join(rows)
-            f'<circle cx="{legend_x + 18}" cy="{legend_y + 140}" r="13" '
+            + f'<circle cx="{legend_x + 18}" cy="{legend_y + 140}" r="13" '
             'fill="#0ea5e9" fill-opacity="0.18"/>'
             f'<circle cx="{legend_x + 18}" cy="{legend_y + 140}" r="5" '
             'fill="#0ea5e9" fill-opacity="0.9"/>'
