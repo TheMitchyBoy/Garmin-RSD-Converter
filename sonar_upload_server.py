@@ -138,6 +138,16 @@ def _read_request_body_to_file(rfile, content_length: int, dest: Path) -> None:
             remaining -= len(chunk)
 
 
+
+def _parse_multipart_from_path(
+    boundary: str,
+    raw_path: Path,
+    uploads_root: Path,
+) -> Tuple[Dict[str, List[str]], List[Path]]:
+    """Parse a multipart upload body saved to disk."""
+    return _parse_multipart_form_data(boundary, raw_path.read_bytes(), uploads_root)
+
+
 def _parse_request_form_data_streaming(
     content_type_header: str,
     rfile,
