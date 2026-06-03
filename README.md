@@ -20,8 +20,12 @@ Convert Garmin Sonar .RSD data into CSV, map exports, heatmaps, dashboards, and 
 
 ### Setup
 
+The converter has no third-party runtime dependencies, but a `requirements.txt`
+is included for convenience:
+
 ```bash
-cd /workspaces/Garmin-RSD-Converter
+git clone https://github.com/<your-fork>/Garmin-RSD-Converter.git
+cd Garmin-RSD-Converter
 pip install -r requirements.txt
 ```
 

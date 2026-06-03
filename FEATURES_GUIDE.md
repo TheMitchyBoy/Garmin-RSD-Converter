@@ -201,13 +201,13 @@ python sonar_cli.py health fish_detections.geojson --report --location "Lake Sup
 Create an interactive, beautiful HTML dashboard for sharing fishing health data.
 
 **Dashboard Features:**
-- Real-time interactive map (Leaflet)
-- Health score visualization
-- Population composition charts
+- Embedded SVG detection map (no external map tiles or JavaScript libraries)
+- Headline health metrics and overall score
+- Population composition breakdown
 - Habitat condition metrics
-- Fish detection points with details
-- Responsive design (mobile-friendly)
-- No external dependencies needed (embedded all libraries)
+- Sortable table of individual fish detections (first 250)
+- Responsive layout for desktop and mobile
+- Single self-contained HTML file with no external assets
 
 **Colors & Styling:**
 - Fish size indicated by point color:
