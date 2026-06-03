@@ -425,6 +425,7 @@ def export_html_player(
     }}
     header h1 {{ margin: 0 0 6px; font-size: 22px; }}
     header p {{ margin: 0; opacity: 0.9; font-size: 14px; }}
+    header p.legal {{ margin-top: 8px; font-size: 12px; opacity: 0.88; max-width: 900px; line-height: 1.35; }}
     main {{ max-width: 1100px; margin: 0 auto; padding: 20px; }}
     canvas {{
       width: 100%;
@@ -479,6 +480,7 @@ def export_html_player(
   <header>
     <h1>Garmin Sonar Playback</h1>
     <p id="channel-label">{channel.label} — scrolling echogram (live-style)</p>
+    <p class="legal">Disclaimer: This software is independent and is not affiliated with, endorsed by, or sponsored by Garmin. It visualizes sonar data collected from compatible devices.</p>
   </header>
   <main>
     <canvas id="sonar" width="{width}" height="{height}"></canvas>

@@ -4,6 +4,8 @@ Convert Garmin `.RSD` sonar recordings into CSV, interactive maps, bathymetry ex
 
 Built for anglers, lake surveyors, and anyone who wants to turn Garmin fish-finder recordings into GIS-friendly data without proprietary desktop software.
 
+> **Legal disclaimer:** This project is independent and is **not affiliated with, endorsed by, or sponsored by Garmin**. It is software that processes sonar data collected/exported from compatible devices.
+
 ---
 
 ## How it works
