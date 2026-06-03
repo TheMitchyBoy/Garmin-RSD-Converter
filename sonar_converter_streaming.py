@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Optional, Tuple
 import logging
 
+from geo_utils import decode_garmin_coordinate_pair
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -126,17 +128,11 @@ class SonarRSDStreamingParser:
             # Extract latitude
             try:
                 lat_raw = struct.unpack('<i', data[4:8])[0]
-                if abs(lat_raw) < 100000000:
-                    frame_data['latitude'] = lat_raw / 10000000.0
-                    has_data = True
-            except:
-                pass
-            
-            # Extract longitude
-            try:
                 lon_raw = struct.unpack('<i', data[8:12])[0]
-                if abs(lon_raw) < 100000000:
-                    frame_data['longitude'] = lon_raw / 10000000.0
+                lat, lon = decode_garmin_coordinate_pair(lat_raw, lon_raw)
+                if lat is not None and lon is not None:
+                    frame_data['latitude'] = lat
+                    frame_data['longitude'] = lon
                     has_data = True
             except:
                 pass

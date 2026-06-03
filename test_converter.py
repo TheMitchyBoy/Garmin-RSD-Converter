@@ -6,6 +6,7 @@ Unit tests for sonar export utilities.
 import unittest
 import tempfile
 import json
+import struct
 from pathlib import Path
 from analysis_tools import MapGenerator
 from fish_detection import FishDetector
@@ -13,6 +14,9 @@ from heatmap_generator import HeatmapGenerator
 from population_health import PopulationHealthAnalytics
 from web_visualizer import WebVisualizer
 from map_visuals import bathymetry_color, grid_cell_polygon
+from geo_utils import decode_garmin_coordinate_pair
+from sonar_converter import SonarRSDParser
+from sonar_converter_streaming import SonarRSDStreamingParser
 
 
 class TestMapGenerator(unittest.TestCase):
@@ -126,6 +130,38 @@ class TestMapGenerator(unittest.TestCase):
         self.assertIn('Seabed depth', content)
         self.assertIn('Fish detections', content)
         self.assertIn('layers.seabed', content)
+
+    def test_decode_garmin_coordinate_pair_handles_alaska_ranges(self):
+        lat_raw = int(61.2181 * 10_000_000)
+        lon_raw = int(-149.9003 * 10_000_000)
+        lat, lon = decode_garmin_coordinate_pair(lat_raw, lon_raw)
+        self.assertIsNotNone(lat)
+        self.assertIsNotNone(lon)
+        self.assertAlmostEqual(lat, 61.2181, places=4)
+        self.assertAlmostEqual(lon, -149.9003, places=4)
+
+    def test_streaming_parser_extracts_full_scale_coordinates(self):
+        parser = SonarRSDStreamingParser()
+        data = bytearray(256)
+        data[4:8] = struct.pack('<i', int(61.2181 * 10_000_000))
+        data[8:12] = struct.pack('<i', int(-149.9003 * 10_000_000))
+
+        frame_data = parser._extract_frame_data(bytes(data), 0)
+        self.assertIsNotNone(frame_data)
+        self.assertAlmostEqual(frame_data['latitude'], 61.2181, places=4)
+        self.assertAlmostEqual(frame_data['longitude'], -149.9003, places=4)
+
+    def test_non_streaming_parser_extracts_full_scale_coordinates(self):
+        parser = SonarRSDParser()
+        data = bytearray(256)
+        data[4:8] = struct.pack('<i', int(61.2181 * 10_000_000))
+        data[8:12] = struct.pack('<i', int(-149.9003 * 10_000_000))
+        data[32:34] = struct.pack('<H', 200)
+
+        frame = parser._extract_sonar_data(bytes(data), 0)
+        self.assertIsNotNone(frame)
+        self.assertAlmostEqual(frame.latitude, 61.2181, places=4)
+        self.assertAlmostEqual(frame.longitude, -149.9003, places=4)
 
     def test_empty_heatmaps_do_not_crash(self):
         csv_file = self.temp_path / 'empty.csv'
