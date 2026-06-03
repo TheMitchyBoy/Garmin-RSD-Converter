@@ -1,6 +1,6 @@
 # Garmin Sonar RSD Converter
 
-Convert Garmin sonar RSD survey data into CSV, maps, and 3D point-cloud exports.
+Convert Garmin Sonar .RSD data into CSV, or and 3D point-cloud exports.
 
 ## Features
 
