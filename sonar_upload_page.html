@@ -370,9 +370,22 @@
         };
         xhr.onload = () => {
           stopTick(); showProgress(false);
+          const ok = xhr.status >= 200 && xhr.status < 300;
+          const text = xhr.responseText || '';
           try {
-            resolve({ res: { ok: xhr.status >= 200 && xhr.status < 300 }, data: JSON.parse(xhr.responseText || '{}') });
-          } catch { reject(new Error('Invalid server response')); }
+            const data = text ? JSON.parse(text) : {};
+            resolve({ res: { ok }, data });
+          } catch {
+            const contentType = (xhr.getResponseHeader('Content-Type') || '').toLowerCase();
+            const compact = text.replace(/\s+/g, ' ').trim();
+            const preview = compact ? compact.slice(0, 180) : '';
+            const maybeProxy = xhr.status >= 500 || contentType.includes('text/html');
+            if (maybeProxy) {
+              reject(new Error(networkErrorHint('Server returned a non-JSON error') + (preview ? ' · ' + preview : '')));
+              return;
+            }
+            reject(new Error('Invalid server response (' + xhr.status + ')' + (preview ? ' · ' + preview : '')));
+          }
         };
         xhr.onerror = () => { stopTick(); showProgress(false); reject(new Error(networkErrorHint('Upload failed'))); };
         xhr.ontimeout = () => { stopTick(); showProgress(false); reject(new Error(networkErrorHint('Timed out'))); };
