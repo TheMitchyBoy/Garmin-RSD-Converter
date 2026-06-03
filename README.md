@@ -50,6 +50,11 @@ flowchart LR
 - Batch folder/glob processing (`batch`)
 - Local drag-and-drop web UI (`upload`)
 
+### Sonar playback
+- Live-style scrolling echogram from raw RSD (`playback`)
+- Garmin palette, bottom track line, and telemetry HUD
+- MP4 (requires `ffmpeg`), animated GIF, or interactive HTML player
+
 ---
 
 ## Requirements
@@ -113,6 +118,7 @@ python sonar_cli.py pipeline Sonar000.RSD --location "Lake Survey"
 | `batch pipeline` | Bulk full analysis |
 | `batch list` | Preview files that would be processed |
 | `upload` | Local web UI on port 8765 |
+| `playback` | Live-style scrolling sonar video (MP4/GIF/HTML) from RSD |
 
 ### Common examples
 
@@ -139,6 +145,10 @@ python sonar_cli.py batch pipeline ./recordings --output-dir ./exports
 # Web upload
 python sonar_cli.py upload
 # → open http://127.0.0.1:8765/
+
+# Live-style sonar playback
+python sonar_cli.py playback Sonar000.RSD --output sonar.mp4
+python sonar_cli.py playback Sonar000.RSD --format html --output sonar.html
 ```
 
 ### Options
