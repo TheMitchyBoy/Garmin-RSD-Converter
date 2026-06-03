@@ -308,6 +308,8 @@
       maxDepth: 50,
       bottomRows: new Float32Array(0),
       columns: [],
+      signature: '',
+      baseImage: null,
     };
 
     function clamp01(v) {
@@ -495,7 +497,7 @@
       const w = canvas.width;
       const h = canvas.height;
       const n = columns.length;
-      if (!n) return;
+      if (!n) return null;
       const image = ctx.createImageData(w, h);
       const data = image.data;
       for (let y = 0; y < h; y++) {
@@ -511,7 +513,7 @@
           data[idx + 3] = 255;
         }
       }
-      ctx.putImageData(image, 0, 0);
+      return image;
     }
 
     function drawDepthScale(maxDepth) {
@@ -572,8 +574,18 @@
       highlightIdx = hIdx;
       const w = canvas.width;
       const h = canvas.height;
+      const windowStart = Math.max(0, Math.floor(viewStart));
+      const windowEnd = Math.min(pingData.length, Math.ceil(viewEnd));
+      const renderSignature = currentPerspective + '|' + windowStart + '|' + windowEnd + '|' + pingData.length;
       ctx.fillStyle = '#0c1222';
       ctx.fillRect(0, 0, w, h);
+
+      if (lastRender.signature === renderSignature && lastRender.baseImage) {
+        ctx.putImageData(lastRender.baseImage, 0, 0);
+        drawHighlight(hIdx, lastRender.startIndex, lastRender.slice.length);
+        updateZoomLabel();
+        return;
+      }
 
       const { start, slice } = visibleWindow();
       if (!slice.length) {
@@ -586,9 +598,11 @@
       const scales = computeSliceScales(slice);
       const base = buildBaseColumns(slice, scales.maxDepth, scales.minI, scales.maxI);
       const perspectiveColumns = derivePerspective(base.columns, base.bottomRows, scales.maxDepth, currentPerspective);
-      renderColumns(perspectiveColumns, currentPerspective);
+      const image = renderColumns(perspectiveColumns, currentPerspective);
+      if (image) ctx.putImageData(image, 0, 0);
       drawBottomGuide(base.bottomRows);
       drawDepthScale(scales.maxDepth);
+      const baseImage = ctx.getImageData(0, 0, w, h);
       drawHighlight(hIdx, start, slice.length);
       updateZoomLabel();
 
@@ -598,6 +612,8 @@
         maxDepth: scales.maxDepth,
         bottomRows: base.bottomRows,
         columns: perspectiveColumns,
+        signature: renderSignature,
+        baseImage,
       };
     }
 
