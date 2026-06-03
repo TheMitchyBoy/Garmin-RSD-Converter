@@ -49,17 +49,14 @@ python3 sonar_cli.py batch list ./recordings
 ### Convert Sonar File to CSV
 
 ```bash
-# Convert with default settings (256-byte stride)
+# Convert with PINGVerter (default nchunk 500)
 python sonar_cli.py convert Sonar000.RSD
 
 # Specify custom output filename
 python sonar_cli.py convert Sonar000.RSD -o my_sonar_survey.csv
 
-# Use coarser stride for faster processing (less detail)
-python sonar_cli.py convert Sonar000.RSD --stride 512
-
-# Use finer stride for more detail (slower)
-python sonar_cli.py convert Sonar000.RSD --stride 128
+# Validate RSD before converting
+python sonar_cli.py convert Sonar000.RSD --validate
 ```
 
 ### Analyze Sonar CSV
@@ -117,25 +114,13 @@ The generated CSV contains the following columns:
 
 ## Performance Tuning
 
-The `--stride` parameter controls sampling density:
+RSD files are fully decoded by PINGVerter. The `--nchunk` parameter controls internal chunk sizing for PINGVerter (default **500**). Legacy `--stride` is accepted as an alias for `--nchunk`.
 
-### Stride Values
+For very large recordings, validate first:
 
-- **128 bytes**: Maximum detail, slowest (2-3x more data)
-- **256 bytes** (default): Good balance of detail and speed
-- **512 bytes**: Faster processing, coarser data (2x less detail)
-- **1024 bytes**: Very fast, minimal detail
-
-### Example Performance
-
-For a 290 MB sonar file:
-
-| Stride | Frames | Output Size | Time |
-|--------|--------|------------|------|
-| 128 | 2.38M | 130 MB | ~120 sec |
-| 256 | 1.19M | 65 MB | ~46 sec |
-| 512 | 595K | 33 MB | ~25 sec |
-| 1024 | 297K | 16 MB | ~15 sec |
+```bash
+python sonar_cli.py convert Sonar000.RSD --validate
+```
 
 ## Use Cases
 
@@ -181,16 +166,8 @@ Error: File not found: Sonar000.RSD
 - Use full path if file is in different directory: `python sonar_cli.py convert /path/to/Sonar000.RSD`
 
 ### Memory Issues with Large Files
-```
-# Use a larger stride to reduce data size
-python sonar_cli.py convert Sonar000.RSD --stride 512
-```
 
-### CSV File Grows Too Large
-```
-# Use coarser stride for analysis
-python sonar_cli.py convert Sonar000.RSD --stride 1024 -o analysis.csv
-```
+PINGVerter decodes full ping records (more accurate than the old byte scanner). Use batch mode or process files individually. Ensure `pip install -r requirements.txt` has been run.
 
 ### Missing Depth/Temperature Data
 - Not all sonar frames contain depth or temperature readings
