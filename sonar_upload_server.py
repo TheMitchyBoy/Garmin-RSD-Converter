@@ -146,8 +146,8 @@ def _upload_page_html(port: int) -> str:
         <input type="text" id="location" placeholder="Uses file name if empty">
       </label>
       <label>
-        Stride (bytes)
-        <input type="number" id="stride" value="256" min="64" step="64">
+        PINGVerter chunk size
+        <input type="number" id="nchunk" value="500" min="0" step="50">
       </label>
     </div>
 
@@ -215,7 +215,7 @@ def _upload_page_html(port: int) -> str:
       form.append('workflow', document.getElementById('workflow').value);
       form.append('maps', document.getElementById('maps').value);
       form.append('location', document.getElementById('location').value);
-      form.append('stride', document.getElementById('stride').value);
+      form.append('nchunk', document.getElementById('nchunk').value);
 
       try {{
         const res = await fetch('/api/process', {{ method: 'POST', body: form }});
@@ -309,9 +309,9 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
         maps = _field_value(form, 'maps') or ''
         location = _field_value(form, 'location') or None
         try:
-            stride = int(_field_value(form, 'stride') or '256')
+            nchunk = int(_field_value(form, 'nchunk') or _field_value(form, 'stride') or '500')
         except ValueError:
-            stride = 256
+            nchunk = 500
 
         saved_paths = _save_uploaded_files(form, self.uploads_root)
         if not saved_paths:
@@ -332,14 +332,14 @@ class SonarUploadHandler(BaseHTTPRequestHandler):
                 summary = batch_pipeline(
                     saved_paths,
                     output_dir=session_dir,
-                    stride=stride,
+                    nchunk=nchunk,
                     location=location,
                 )
             else:
                 summary = batch_convert(
                     saved_paths,
                     output_dir=session_dir,
-                    stride=stride,
+                    nchunk=nchunk,
                     map_formats=map_formats,
                 )
         except Exception as exc:

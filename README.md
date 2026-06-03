@@ -17,6 +17,9 @@ Convert Garmin Sonar .RSD data into CSV, map exports, heatmaps, dashboards, and 
 
 ### Requirements
 - Python 3.8+
+- [PINGVerter](https://pypi.org/project/pingverter/) (`pip install -r requirements.txt`)
+
+RSD files are decoded with PINGVerter (documented Garmin format parser), not the legacy heuristic byte scanner.
 
 ### Setup
 
@@ -134,7 +137,8 @@ The repository contains a single sonar-focused CLI:
 ## Files
 
 - `sonar_converter.py` — sonar RSD parser and CSV exporter
-- `sonar_converter_streaming.py` — streaming sonar conversion for large files
+- `pingverter_adapter.py` — PINGVerter-based RSD → CSV conversion
+- `sonar_converter_streaming.py` — conversion CLI entry point (delegates to PINGVerter)
 - `sonar_cli.py` — command-line interface for sonar workflows
 - `analysis_tools.py` — sonar CSV mapping and 3D export helpers
 - `heatmap_generator.py` — GeoJSON heatmaps for sonar intensity, depth, and temperature

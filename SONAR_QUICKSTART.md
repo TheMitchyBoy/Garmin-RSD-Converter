@@ -49,17 +49,14 @@ python3 sonar_cli.py batch list ./recordings
 ### Convert Sonar File to CSV
 
 ```bash
-# Convert with default settings (256-byte stride)
+# Convert with PINGVerter (default nchunk 500)
 python sonar_cli.py convert Sonar000.RSD
 
 # Specify custom output filename
 python sonar_cli.py convert Sonar000.RSD -o my_sonar_survey.csv
 
-# Use coarser stride for faster processing (less detail)
-python sonar_cli.py convert Sonar000.RSD --stride 512
-
-# Use finer stride for more detail (slower)
-python sonar_cli.py convert Sonar000.RSD --stride 128
+# Validate RSD before converting
+python sonar_cli.py convert Sonar000.RSD --validate
 ```
 
 ### Analyze Sonar CSV

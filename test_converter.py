@@ -8,6 +8,7 @@ import tempfile
 import json
 import struct
 from pathlib import Path
+from unittest.mock import patch
 from analysis_tools import MapGenerator
 from fish_detection import FishDetector
 from heatmap_generator import HeatmapGenerator
@@ -16,7 +17,7 @@ from web_visualizer import WebVisualizer
 from map_visuals import bathymetry_color, grid_cell_polygon
 from geo_utils import decode_garmin_coordinate_pair
 from sonar_converter import SonarRSDParser
-from sonar_converter_streaming import SonarRSDStreamingParser, validate_rsd_file
+from pingverter_adapter import validate_rsd_file
 from survey_tools import merge_csv_files, compare_surveys, compute_track_quality
 from geotiff_export import GeoTiffWriter
 from las_export import LasExporter
@@ -143,17 +144,6 @@ class TestMapGenerator(unittest.TestCase):
         self.assertAlmostEqual(lat, 61.2181, places=4)
         self.assertAlmostEqual(lon, -149.9003, places=4)
 
-    def test_streaming_parser_extracts_full_scale_coordinates(self):
-        parser = SonarRSDStreamingParser()
-        data = bytearray(256)
-        data[4:8] = struct.pack('<i', int(61.2181 * 10_000_000))
-        data[8:12] = struct.pack('<i', int(-149.9003 * 10_000_000))
-
-        frame_data = parser._extract_frame_data(bytes(data), 0)
-        self.assertIsNotNone(frame_data)
-        self.assertAlmostEqual(frame_data['latitude'], 61.2181, places=4)
-        self.assertAlmostEqual(frame_data['longitude'], -149.9003, places=4)
-
     def test_non_streaming_parser_extracts_full_scale_coordinates(self):
         parser = SonarRSDParser()
         data = bytearray(256)
@@ -239,18 +229,23 @@ class TestMapGenerator(unittest.TestCase):
         self.assertIn('grade', quality)
         self.assertGreater(quality['total_frames'], 0)
 
-    def test_rsd_validation(self):
-        rsd_file = self.temp_path / 'test.rsd'
-        data = bytearray(1024)
-        data[4:8] = struct.pack('<i', int(40.7128 * 10_000_000))
-        data[8:12] = struct.pack('<i', int(-74.0060 * 10_000_000))
-        data[10:12] = struct.pack('<H', 50)  # depth 5.0m
-        data[32:34] = struct.pack('<H', 120)
-        rsd_file.write_bytes(data)
+    @patch('pingverter_adapter.parse_rsd_with_pingverter')
+    def test_rsd_validation(self, mock_parse):
+        import pandas as pd
+        from unittest.mock import MagicMock
 
-        report = validate_rsd_file(rsd_file, stride=256)
+        sonar = MagicMock()
+        sonar.channel_info = [{'channel_id': 0, 'start_freq_hz': 150000, 'end_freq_hz': 250000}]
+        sonar.header_dat = pd.DataFrame([
+            {'lat': 40.7, 'lon': -74.0, 'inst_dep_m': 5.0, 'tempC': 18.0, 'channel_id': 0, 'ping_cnt': 100},
+        ])
+        mock_parse.return_value = sonar
+
+        rsd_file = self.temp_path / 'test.rsd'
+        rsd_file.write_bytes(b'RSD')
+        report = validate_rsd_file(rsd_file)
         self.assertIn('overall_score', report)
-        self.assertGreater(report['frames_attempted'], 0)
+        self.assertEqual(report['parser'], 'PINGVerter')
 
     def test_geotiff_and_las_exports(self):
         csv_file = self._write_full_sonar_csv()

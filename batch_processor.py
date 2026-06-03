@@ -120,12 +120,14 @@ def batch_convert(
     sources: Sequence[Union[str, Path]],
     *,
     output_dir: Optional[Union[str, Path]] = None,
-    stride: int = 256,
+    nchunk: int = 500,
+    stride: Optional[int] = None,
     map_formats: Optional[Sequence[str]] = None,
     recursive: bool = True,
     continue_on_error: bool = True,
 ) -> BatchSummary:
-    """Convert multiple RSD files to CSV, optionally generating map exports."""
+    """Convert multiple RSD files to CSV via PINGVerter, optionally generating map exports."""
+    chunk_size = stride if stride is not None else nchunk
     files = discover_rsd_files(sources, recursive=recursive)
     summary = BatchSummary()
 
@@ -140,7 +142,7 @@ def batch_convert(
         try:
             csv_path = _resolve_output_csv(input_file, out_root)
             csv_file, frame_count = convert_sonar_rsd_to_csv(
-                input_file, csv_path, stride=stride,
+                input_file, csv_path, nchunk=chunk_size,
             )
             result.csv_path = csv_file
             result.frame_count = frame_count
@@ -166,12 +168,14 @@ def batch_pipeline(
     sources: Sequence[Union[str, Path]],
     *,
     output_dir: Optional[Union[str, Path]] = None,
-    stride: int = 256,
+    nchunk: int = 500,
+    stride: Optional[int] = None,
     location: Optional[str] = None,
     recursive: bool = True,
     continue_on_error: bool = True,
 ) -> BatchSummary:
     """Run the full analysis pipeline on each RSD file."""
+    chunk_size = stride if stride is not None else nchunk
     files = discover_rsd_files(sources, recursive=recursive)
     summary = BatchSummary()
 
@@ -187,7 +191,7 @@ def batch_pipeline(
         try:
             csv_path = _resolve_output_csv(input_file, out_root)
             csv_file, frame_count = convert_sonar_rsd_to_csv(
-                input_file, csv_path, stride=stride,
+                input_file, csv_path, nchunk=chunk_size,
             )
             result.csv_path = csv_file
             result.frame_count = frame_count

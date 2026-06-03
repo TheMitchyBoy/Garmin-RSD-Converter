@@ -31,6 +31,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _resolve_nchunk(args) -> int:
+    """Resolve PINGVerter nchunk from CLI args (--stride is deprecated alias)."""
+    stride = getattr(args, 'stride', None)
+    if stride is not None:
+        return stride
+    nchunk = getattr(args, 'nchunk', None)
+    if nchunk is not None:
+        return nchunk
+    return 500
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Convert Garmin Sonar RSD files and generate maps, heatmaps, and reports',
@@ -93,8 +104,10 @@ Examples:
         '--no-recursive', action='store_true',
         help='When input is a directory, do not search subfolders',
     )
-    convert_cmd.add_argument('--stride', type=int, default=256,
-                           help='Sample every N bytes (default: 256)')
+    convert_cmd.add_argument('--stride', type=int, default=None,
+                           help='Deprecated alias for --nchunk')
+    convert_cmd.add_argument('--nchunk', type=int, default=500,
+                           help='PINGVerter chunk size (default: 500)')
     convert_cmd.add_argument(
         '--validate', action='store_true',
         help='Scan RSD file and report field validity without converting',
@@ -188,8 +201,10 @@ Examples:
         '--location', default=None,
         help='Location name for reports (default: Survey Area, or file name in batch)',
     )
-    pipeline_cmd.add_argument('--stride', type=int, default=256,
-                             help='Conversion stride (default: 256)')
+    pipeline_cmd.add_argument('--stride', type=int, default=None,
+                             help='Deprecated alias for --nchunk')
+    pipeline_cmd.add_argument('--nchunk', type=int, default=500,
+                             help='PINGVerter chunk size (default: 500)')
     pipeline_cmd.add_argument(
         '--output-dir', type=Path,
         help='Write CSV and outputs into this directory (batch / multi-file)',
@@ -214,7 +229,9 @@ Examples:
         '--output-dir', type=Path,
         help='Directory for CSV and map outputs (default: next to each RSD)',
     )
-    batch_convert_cmd.add_argument('--stride', type=int, default=256)
+    batch_convert_cmd.add_argument('--stride', type=int, default=None,
+                                   help='Deprecated alias for --nchunk')
+    batch_convert_cmd.add_argument('--nchunk', type=int, default=500)
     batch_convert_cmd.add_argument(
         '--maps', nargs='+',
         choices=['ply', 'geojson', 'kml', 'gpx', 'geotiff', 'tif', 'las', 'laz', 'all'],
@@ -235,7 +252,8 @@ Examples:
     batch_pipeline_cmd.add_argument('sources', nargs='+')
     batch_pipeline_cmd.add_argument('--output-dir', type=Path)
     batch_pipeline_cmd.add_argument('--location', default=None)
-    batch_pipeline_cmd.add_argument('--stride', type=int, default=256)
+    batch_pipeline_cmd.add_argument('--stride', type=int, default=None)
+    batch_pipeline_cmd.add_argument('--nchunk', type=int, default=500)
     batch_pipeline_cmd.add_argument('--no-recursive', action='store_true')
     batch_pipeline_cmd.add_argument('--fail-fast', action='store_true')
 
@@ -310,7 +328,7 @@ def cmd_convert(args):
         summary = batch_convert(
             sources,
             output_dir=getattr(args, 'output_dir', None),
-            stride=args.stride,
+            nchunk=_resolve_nchunk(args),
             map_formats=args.maps,
             recursive=not getattr(args, 'no_recursive', False),
         )
@@ -320,13 +338,15 @@ def cmd_convert(args):
     input_file = Path(sources[0])
 
     if getattr(args, 'validate', False):
-        report = validate_rsd_file(input_file, stride=args.stride)
+        report = validate_rsd_file(input_file, nchunk=_resolve_nchunk(args))
         print(format_validation_report(report))
         return 0 if report['overall_score'] >= 50 else 1
 
     logger.info(f"Converting {input_file}...")
     output_file = Path(args.output) if args.output else None
-    csv_file, frame_count = convert_sonar_rsd_to_csv(input_file, output_file, stride=args.stride)
+    csv_file, frame_count = convert_sonar_rsd_to_csv(
+        input_file, output_file, nchunk=_resolve_nchunk(args),
+    )
 
     print(f"✓ Conversion complete!")
     print(f"  Output: {csv_file}")
@@ -634,7 +654,7 @@ def cmd_pipeline(args):
         summary = batch_pipeline(
             sources,
             output_dir=getattr(args, 'output_dir', None),
-            stride=args.stride,
+            nchunk=_resolve_nchunk(args),
             location=args.location,
             recursive=not getattr(args, 'no_recursive', False),
         )
@@ -649,7 +669,7 @@ def cmd_pipeline(args):
 
     print("Starting full analysis pipeline...")
 
-    csv_file, frame_count = convert_sonar_rsd_to_csv(input_file, stride=args.stride)
+    csv_file, frame_count = convert_sonar_rsd_to_csv(input_file, nchunk=_resolve_nchunk(args))
     print(f"✓ CSV created: {csv_file}")
     print(f"✓ Frames extracted: {frame_count:,}")
 
@@ -712,7 +732,7 @@ def cmd_batch(args):
         summary = batch_convert(
             args.sources,
             output_dir=args.output_dir,
-            stride=args.stride,
+            nchunk=_resolve_nchunk(args),
             map_formats=args.maps,
             recursive=recursive,
             continue_on_error=continue_on_error,
@@ -721,7 +741,7 @@ def cmd_batch(args):
         summary = batch_pipeline(
             args.sources,
             output_dir=args.output_dir,
-            stride=args.stride,
+            nchunk=_resolve_nchunk(args),
             location=args.location,
             recursive=recursive,
             continue_on_error=continue_on_error,
