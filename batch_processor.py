@@ -20,6 +20,7 @@ from export_tools import generate_map_exports
 from heatmap_generator import HeatmapGenerator
 from fish_detection import FishDetector
 from population_health import PopulationHealthAnalytics
+from survey_viz_data import DEFAULT_DASHBOARD_GRID_SIZE
 from web_visualizer import WebVisualizer
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ def run_csv_analysis_pipeline(
     location: Optional[str] = None,
     full_pipeline: bool = True,
     map_formats: Optional[Sequence[str]] = None,
+    grid_size: float = DEFAULT_DASHBOARD_GRID_SIZE,
 ) -> List[Path]:
     """Run map / heatmap / fish analysis on an existing project CSV."""
     label = _location_label(csv_file, location)
@@ -153,9 +155,9 @@ def run_csv_analysis_pipeline(
             MapGenerator.create_kml(csv_file),
             MapGenerator.create_gpx(csv_file),
         ])
-        intensity_hm = HeatmapGenerator.create_intensity_heatmap(csv_file)
-        depth_hm = HeatmapGenerator.create_depth_heatmap(csv_file, grid_size=0.01)
-        temperature_hm = HeatmapGenerator.create_temperature_heatmap(csv_file, grid_size=0.01)
+        intensity_hm = HeatmapGenerator.create_intensity_heatmap(csv_file, grid_size=grid_size)
+        depth_hm = HeatmapGenerator.create_depth_heatmap(csv_file, grid_size=grid_size)
+        temperature_hm = HeatmapGenerator.create_temperature_heatmap(csv_file, grid_size=grid_size)
         outputs.extend([intensity_hm, depth_hm, temperature_hm])
 
         detections_file, detections = FishDetector.detect_fish(csv_file)
@@ -176,6 +178,8 @@ def run_csv_analysis_pipeline(
                 location_name=label,
                 depth_geojson_file=depth_hm,
                 output_file=out_dir / f'fishing_dashboard_{slug}.html',
+                csv_file=csv_file,
+                grid_size=grid_size,
             )
         )
     elif map_formats:

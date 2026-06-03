@@ -10,219 +10,388 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <style>
     :root {
-      --bg: #f1f5f9;
-      --surface: #ffffff;
-      --text: #0f172a;
-      --muted: #64748b;
-      --border: #e2e8f0;
-      --accent: #0d9488;
-      --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 10px 30px rgba(15, 23, 42, 0.08);
-      --radius: 14px;
-      --font: "DM Sans", system-ui, sans-serif;
+      --bg: #f1f5f9; --surface: #fff; --text: #0f172a; --muted: #64748b;
+      --border: #e2e8f0; --accent: #0d9488; --track: #eab308;
+      --shadow: 0 1px 2px rgba(15,23,42,.05), 0 10px 30px rgba(15,23,42,.08);
+      --radius: 14px; --font: "DM Sans", system-ui, sans-serif;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
-    .topbar {
-      background: linear-gradient(135deg, #0f766e 0%, #0891b2 100%);
-      color: white;
-      padding: 1.5rem 1.25rem;
-    }
-    .topbar-inner { max-width: 1180px; margin: 0 auto; }
-    .topbar h1 { margin: 0; font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
-    .topbar p { margin: 0.35rem 0 0; opacity: 0.92; font-size: 0.95rem; }
-    main { max-width: 1180px; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }
-    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.85rem; margin-bottom: 1.25rem; }
-    .stat-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 1rem 1.1rem;
-      box-shadow: var(--shadow);
-    }
-    .stat-label {
-      display: block;
-      font-size: 0.72rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--muted);
-      margin-bottom: 0.35rem;
-    }
-    .stat-value { font-size: 1.65rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
-    .panel {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 1.25rem;
-      box-shadow: var(--shadow);
-      margin-bottom: 1.25rem;
-    }
-    .panel h2 { margin: 0 0 0.35rem; font-size: 1.1rem; font-weight: 700; }
-    .panel .sub { margin: 0 0 1rem; color: var(--muted); font-size: 0.875rem; }
-    #map {
-      width: 100%;
-      height: min(58vh, 560px);
-      min-height: 360px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      z-index: 0;
-    }
-    .legends { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; }
-    .legend {
-      flex: 1;
-      min-width: 200px;
-      padding: 0.85rem 1rem;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      font-size: 0.85rem;
-    }
-    .legend h3 {
-      margin: 0 0 0.65rem;
-      font-size: 0.72rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--muted);
-    }
-    .legend-item { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
-    .swatch { width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.1); flex-shrink: 0; }
+    body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--text); }
+    .topbar { background: linear-gradient(135deg, #0f766e, #0891b2); color: #fff; padding: 1.25rem; }
+    .topbar-inner { max-width: 1400px; margin: 0 auto; }
+    .topbar h1 { margin: 0; font-size: 1.4rem; font-weight: 700; }
+    .topbar p { margin: 0.3rem 0 0; opacity: 0.92; font-size: 0.9rem; }
+    main { max-width: 1400px; margin: 0 auto; padding: 1.25rem; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.85rem 1rem; box-shadow: var(--shadow); }
+    .stat-label { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+    .stat-value { font-size: 1.45rem; font-weight: 700; margin-top: 0.2rem; }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; box-shadow: var(--shadow); margin-bottom: 1rem; }
+    .panel h2 { margin: 0 0 0.25rem; font-size: 1.05rem; }
+    .panel .sub { margin: 0 0 0.75rem; color: var(--muted); font-size: 0.82rem; }
+    .viz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 960px) { .viz-grid { grid-template-columns: 1fr; } }
+    #map { width: 100%; height: 420px; border-radius: 10px; border: 1px solid var(--border); }
+    .echogram-wrap { position: relative; }
+    #echogram { width: 100%; height: 420px; border-radius: 10px; border: 1px solid var(--border); cursor: crosshair; display: block; background: #0c1222; }
+    .echogram-hud { position: absolute; left: 8px; top: 8px; font-size: 0.75rem; color: #e2e8f0; background: rgba(15,23,42,.75); padding: 0.35rem 0.5rem; border-radius: 6px; pointer-events: none; }
+    .legends { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.75rem; }
+    .legend { flex: 1; min-width: 180px; padding: 0.65rem 0.85rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; font-size: 0.8rem; }
+    .legend h3 { margin: 0 0 0.5rem; font-size: 0.7rem; text-transform: uppercase; color: var(--muted); }
+    .legend-item { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.3rem; }
+    .swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,.1); }
     .swatch-round { border-radius: 50%; }
-    .depth-bar { height: 12px; border-radius: 6px; margin: 0.5rem 0; border: 1px solid var(--border); }
-    .depth-labels { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--muted); }
-    .table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th, td { padding: 0.65rem 0.85rem; text-align: left; border-bottom: 1px solid var(--border); }
-    th { background: var(--bg); color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .depth-bar { height: 10px; border-radius: 5px; margin: 0.4rem 0; border: 1px solid var(--border); }
+    .depth-labels { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--muted); }
+    .label-panel { display: grid; grid-template-columns: 1fr 280px; gap: 1rem; }
+    @media (max-width: 800px) { .label-panel { grid-template-columns: 1fr; } }
+    .label-form label { display: block; font-size: 0.75rem; font-weight: 600; margin: 0.5rem 0 0.25rem; }
+    .label-form select, .label-form input, .label-form textarea {
+      width: 100%; padding: 0.45rem 0.55rem; border-radius: 8px; border: 1px solid var(--border); font-family: inherit; font-size: 0.85rem;
+    }
+    .label-form textarea { min-height: 56px; resize: vertical; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+    .btn { padding: 0.5rem 0.85rem; border-radius: 8px; border: none; font-family: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-secondary { background: var(--bg); border: 1px solid var(--border); color: var(--text); }
+    .label-list { max-height: 200px; overflow-y: auto; margin-top: 0.75rem; font-size: 0.8rem; }
+    .label-chip { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 0.5rem; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th, td { padding: 0.5rem 0.65rem; border-bottom: 1px solid var(--border); text-align: left; }
+    th { background: var(--bg); color: var(--muted); font-size: 0.72rem; text-transform: uppercase; }
     tbody tr:hover { background: #f8fafc; }
-    tbody tr:last-child td { border-bottom: none; }
     .muted { color: var(--muted); }
-    .leaflet-control-layers { border-radius: 10px !important; border: 1px solid var(--border) !important; box-shadow: var(--shadow) !important; font-family: var(--font) !important; }
   </style>
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-inner">
       <h1>Survey analytics</h1>
-      <p>__TITLE__ — seabed bathymetry &amp; fish detections</p>
+      <p>__TITLE__ · seabed grid __GRID_LABEL__ · source <code>__CSV_NAME__</code></p>
     </div>
   </header>
   <main>
     <section class="stats">__METRICS_PRIMARY__</section>
 
-    <section class="panel map-section">
-      <h2>Interactive map</h2>
-      <p class="sub">Toggle seabed depth and fish detection layers. Basemap requires network.</p>
-      <div id="map" role="img" aria-label="Survey map"></div>
-      <div class="legends">
-        __DEPTH_LEGEND__
-        __FISH_LEGEND__
+    <section class="panel">
+      <h2>Map &amp; sonar recording</h2>
+      <p class="sub">Smaller bathymetry cells for detail. Yellow line = GPS route. Click the sonar strip to mark fish for training, or click auto-detections on the map.</p>
+      <div class="viz-grid">
+        <div>
+          <div id="map" role="img" aria-label="Survey map"></div>
+          <div class="legends">__DEPTH_LEGEND____FISH_LEGEND__</div>
+        </div>
+        <div class="echogram-wrap">
+          <canvas id="echogram" width="1200" height="420" aria-label="Sonar intensity strip"></canvas>
+          <div class="echogram-hud" id="echoHud">Ping — · depth — m</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel label-panel">
+      <div>
+        <h2>Fish training labels</h2>
+        <p class="sub">Mark fish on the sonar plot (or map) and assign a species. Export JSON to train your detector.</p>
+        <div class="label-form">
+          <label>Species / type</label>
+          <select id="speciesSelect">
+            <option value="unknown">Unknown</option>
+            <option value="salmon">Salmon</option>
+            <option value="trout">Trout</option>
+            <option value="bass">Bass</option>
+            <option value="walleye">Walleye</option>
+            <option value="pike">Pike</option>
+            <option value="catfish">Catfish</option>
+            <option value="perch">Perch</option>
+            <option value="crappie">Crappie</option>
+            <option value="school">School (mixed)</option>
+            <option value="bait">Bait / clutter</option>
+            <option value="other">Other</option>
+          </select>
+          <label>Size class</label>
+          <select id="sizeSelect">
+            <option value="small">Small</option>
+            <option value="medium" selected>Medium</option>
+            <option value="large">Large</option>
+            <option value="school">School</option>
+          </select>
+          <label>Notes</label>
+          <textarea id="labelNotes" placeholder="Arc shape, bottom hugging, etc."></textarea>
+          <div class="btn-row">
+            <button type="button" class="btn btn-primary" id="addLabelBtn" disabled>Add label at cursor</button>
+            <button type="button" class="btn btn-secondary" id="exportLabelsBtn">Export training JSON</button>
+            <button type="button" class="btn btn-secondary" id="clearLabelsBtn">Clear all</button>
+          </div>
+          <div class="label-list" id="labelList"><p class="muted">Click the sonar strip or a fish marker to position a label.</p></div>
+        </div>
+      </div>
+      <div>
+        <h2>Auto-detections</h2>
+        <p class="sub">Algorithm picks from intensity/depth rules — relabel to teach your model.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Size</th><th>Lat</th><th>Lon</th><th>Depth</th><th>Conf.</th></tr></thead>
+            <tbody>__ROWS__</tbody>
+          </table>
+        </div>
       </div>
     </section>
 
     <section class="stats">__METRICS_SECONDARY__</section>
-
-    <section class="panel">
-      <h2>Detection log</h2>
-      <p class="sub">Sample of detected fish from this survey</p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Size</th>
-              <th>Latitude</th>
-              <th>Longitude</th>
-              <th>Depth</th>
-              <th>Intensity</th>
-              <th>Confidence</th>
-            </tr>
-          </thead>
-          <tbody>__ROWS__</tbody>
-        </table>
-      </div>
-    </section>
   </main>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
     const fishData = __FISH_GEOJSON__;
     const seabedData = __SEABED_GEOJSON__;
+    const trackData = __TRACK_GEOJSON__;
+    const echogramPings = __ECHOGRAM_PINGS__;
     const hasSeabed = __HAS_SEABED__;
+    const surveyTitle = __SURVEY_TITLE_JSON__;
+    const sourceCsv = __CSV_NAME_JSON__;
+
+    const STORAGE_KEY = 'sonar_training_labels_' + sourceCsv.replace(/[^a-z0-9]+/gi, '_');
 
     const map = L.map('map', { scrollWheelZoom: true });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap'
-    }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OSM' }).addTo(map);
 
     const layers = {};
+    let pingMarker = null;
+    let cursorPing = null;
 
     if (hasSeabed) {
       layers.seabed = L.geoJSON(seabedData, {
-        style: (feature) => {
-          const p = feature.properties || {};
-          return {
-            fillColor: p.color || '#38bdf8',
-            color: '#0f766e',
-            weight: 1,
-            opacity: 0.85,
-            fillOpacity: p.fill_opacity != null ? p.fill_opacity : 0.72
-          };
+        style: (f) => {
+          const p = f.properties || {};
+          return { fillColor: p.color || '#38bdf8', color: '#0f766e', weight: 0.6, opacity: 0.9, fillOpacity: p.fill_opacity != null ? p.fill_opacity : 0.78 };
         },
-        onEachFeature: (feature, layer) => {
-          const p = feature.properties || {};
-          layer.bindPopup(
-            '<strong>Seabed</strong><br>Depth: ' + (p.depth_m != null ? p.depth_m + ' m' : 'n/a')
-          );
+        onEachFeature: (f, layer) => {
+          const p = f.properties || {};
+          layer.bindPopup('<strong>Seabed cell</strong><br>Depth: ' + (p.depth_m != null ? p.depth_m + ' m' : 'n/a'));
         }
-      });
-      layers.seabed.addTo(map);
+      }).addTo(map);
+    }
+
+    if (trackData.features && trackData.features.length) {
+      layers.track = L.geoJSON(trackData, {
+        filter: (f) => f.geometry && f.geometry.type === 'LineString',
+        style: { color: '#eab308', weight: 4, opacity: 0.95, lineCap: 'round' }
+      }).addTo(map);
     }
 
     layers.fish = L.geoJSON(fishData, {
-      pointToLayer: (feature, latlng) => {
-        const p = feature.properties || {};
-        const size = p.size || 'unknown';
-        const confidence = p.confidence != null ? p.confidence : 0.5;
+      pointToLayer: (f, latlng) => {
+        const p = f.properties || {};
         const radii = { small: 5, medium: 7, large: 9, school: 12 };
-        const radius = (radii[size] || 6) + Math.min(confidence, 1) * 4;
-        return L.circleMarker(latlng, {
-          radius,
-          fillColor: p.color || '#f59e0b',
-          color: '#fff',
-          weight: 2,
-          opacity: 1,
-          fillOpacity: 0.9
-        });
+        const r = (radii[p.size] || 6) + Math.min(p.confidence || 0.5, 1) * 3;
+        return L.circleMarker(latlng, { radius: r, fillColor: p.color || '#f59e0b', color: '#fff', weight: 2, fillOpacity: 0.9 });
       },
-      onEachFeature: (feature, layer) => {
-        const p = feature.properties || {};
-        layer.bindPopup(
-          '<strong>' + (p.size || 'Fish') + '</strong><br>' +
-          'Depth: ' + (p.depth_m != null ? p.depth_m + ' m' : 'n/a') + '<br>' +
-          'Confidence: ' + (p.confidence != null ? p.confidence : 'n/a')
-        );
+      onEachFeature: (f, layer) => {
+        const p = f.properties || {};
+        layer.bindPopup('<strong>' + (p.size || 'fish') + '</strong><br>Click to use for labeling');
+        layer.on('click', () => {
+          cursorPing = {
+            frame: p.frame || 0,
+            time_s: null,
+            lat: f.geometry.coordinates[1],
+            lon: f.geometry.coordinates[0],
+            depth_m: p.depth_m,
+            intensity: p.intensity,
+            source: 'auto_detection'
+          };
+          document.getElementById('addLabelBtn').disabled = false;
+          setPingMarker(cursorPing.lat, cursorPing.lon);
+          document.getElementById('echoHud').textContent = 'Auto-detection · depth ' + (p.depth_m != null ? p.depth_m + ' m' : '—');
+        });
       }
-    });
-    layers.fish.addTo(map);
+    }).addTo(map);
 
     const overlayMaps = {};
-    if (hasSeabed) overlayMaps['Seabed depth'] = layers.seabed;
-    overlayMaps['Fish detections'] = layers.fish;
+    if (layers.track) overlayMaps['Survey route'] = layers.track;
+    if (hasSeabed) overlayMaps['Seabed (fine grid)'] = layers.seabed;
+    overlayMaps['Fish (auto)'] = layers.fish;
     L.control.layers(null, overlayMaps, { collapsed: false }).addTo(map);
 
-    const allBounds = [];
-    [layers.fish, layers.seabed].filter(Boolean).forEach((layer) => {
-      try {
-        const b = layer.getBounds();
-        if (b.isValid()) allBounds.push(b);
-      } catch (e) {}
-    });
-    if (allBounds.length) {
-      const combined = allBounds.reduce((acc, b) => acc.extend(b));
-      map.fitBounds(combined, { padding: [32, 32] });
-    } else {
-      map.setView([0, 0], 2);
+    function setPingMarker(lat, lon) {
+      if (pingMarker) map.removeLayer(pingMarker);
+      if (lat == null || lon == null) return;
+      pingMarker = L.circleMarker([lat, lon], { radius: 9, color: '#22d3ee', fillColor: '#22d3ee', fillOpacity: 0.85, weight: 3 }).addTo(map);
     }
+
+    const bounds = [];
+    [layers.fish, layers.seabed, layers.track].filter(Boolean).forEach((layer) => {
+      try { const b = layer.getBounds(); if (b.isValid()) bounds.push(b); } catch (e) {}
+    });
+    if (bounds.length) map.fitBounds(bounds.reduce((a, b) => a.extend(b)), { padding: [28, 28] });
+    else map.setView([0, 0], 2);
+
+    // —— Sonar echogram strip (intensity vs depth over time) ——
+    const canvas = document.getElementById('echogram');
+    const ctx = canvas.getContext('2d');
+    const hud = document.getElementById('echoHud');
+
+    function intensityColor(t) {
+      const x = Math.max(0, Math.min(1, t));
+      const r = Math.floor(20 + x * 235);
+      const g = Math.floor(40 + x * 180);
+      const b = Math.floor(80 + (1 - x) * 120);
+      return 'rgb(' + r + ',' + g + ',' + b + ')';
+    }
+
+    function drawEchogram(highlightIdx) {
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.fillStyle = '#0c1222';
+      ctx.fillRect(0, 0, w, h);
+      if (!echogramPings.length) {
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '14px sans-serif';
+        ctx.fillText('No ping data in CSV', 20, 40);
+        return;
+      }
+      const depths = echogramPings.map(p => p.depth_m).filter(d => d != null && d > 0);
+      const maxDepth = depths.length ? Math.max(...depths) * 1.1 : 50;
+      const maxI = Math.max(...echogramPings.map(p => p.intensity || 0), 1);
+      const n = echogramPings.length;
+
+      for (let i = 0; i < n; i++) {
+        const p = echogramPings[i];
+        const x = (i / Math.max(n - 1, 1)) * (w - 2) + 1;
+        const depth = p.depth_m != null && p.depth_m > 0 ? p.depth_m : maxDepth * 0.5;
+        const y = (depth / maxDepth) * (h - 20) + 10;
+        const t = (p.intensity || 0) / maxI;
+        ctx.fillStyle = intensityColor(t);
+        const barW = Math.max(2, w / n);
+        ctx.fillRect(x - barW / 2, y - 3, barW, 6);
+        if (highlightIdx === i) {
+          ctx.strokeStyle = '#22d3ee';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x - barW / 2 - 1, y - 8, barW + 2, 16);
+        }
+      }
+      ctx.fillStyle = 'rgba(148,163,184,0.9)';
+      ctx.font = '11px sans-serif';
+      ctx.fillText('0 m', 4, 14);
+      ctx.fillText(maxDepth.toFixed(0) + ' m', 4, h - 6);
+      ctx.fillText('← start', 8, h - 6);
+      ctx.fillText('end →', w - 52, h - 6);
+    }
+
+    function pingAtCanvas(px, py) {
+      const w = canvas.width;
+      const h = canvas.height;
+      const n = echogramPings.length;
+      if (!n) return null;
+      const idx = Math.round((px / w) * (n - 1));
+      const depths = echogramPings.map(p => p.depth_m).filter(d => d != null && d > 0);
+      const maxDepth = depths.length ? Math.max(...depths) * 1.1 : 50;
+      const depthFromY = ((py - 10) / (h - 20)) * maxDepth;
+      const p = echogramPings[Math.max(0, Math.min(n - 1, idx))];
+      return { idx, ping: Object.assign({}, p, { depth_m: Math.max(0, depthFromY) }), maxDepth };
+    }
+
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const hit = pingAtCanvas((e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY);
+      if (!hit) return;
+      const p = hit.ping;
+      hud.textContent = 'Ping ' + hit.idx + ' · ' + (p.time_s != null ? p.time_s.toFixed(1) + ' s · ' : '') + 'depth ' + (p.depth_m != null ? p.depth_m.toFixed(1) : '—') + ' m';
+      drawEchogram(hit.idx);
+      if (p.lat != null && p.lon != null) setPingMarker(p.lat, p.lon);
+    });
+
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const hit = pingAtCanvas((e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY);
+      if (!hit) return;
+      cursorPing = Object.assign({ source: 'sonar_click' }, hit.ping, { frame: hit.ping.frame || hit.idx });
+      document.getElementById('addLabelBtn').disabled = false;
+      drawEchogram(hit.idx);
+      if (cursorPing.lat != null) setPingMarker(cursorPing.lat, cursorPing.lon);
+    });
+
+    drawEchogram(-1);
+
+    // —— Training labels ——
+    let labels = [];
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) labels = JSON.parse(saved).labels || [];
+    } catch (e) {}
+
+    function renderLabelList() {
+      const el = document.getElementById('labelList');
+      if (!labels.length) {
+        el.innerHTML = '<p class="muted">No labels yet.</p>';
+        return;
+      }
+      el.innerHTML = labels.map((lb, i) =>
+        '<div class="label-chip"><span><strong>' + lb.species + '</strong> · ' + lb.size +
+        ' · f' + lb.frame + ' · ' + (lb.depth_m != null ? lb.depth_m.toFixed(1) + 'm' : '') + '</span>' +
+        '<button type="button" class="btn btn-secondary" data-idx="' + i + '" style="padding:0.2rem 0.45rem;font-size:0.75rem">×</button></div>'
+      ).join('');
+      el.querySelectorAll('button[data-idx]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          labels.splice(parseInt(btn.getAttribute('data-idx'), 10), 1);
+          persistLabels();
+          renderLabelList();
+        });
+      });
+    }
+
+    function persistLabels() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ survey: surveyTitle, source_csv: sourceCsv, labels }));
+    }
+
+    document.getElementById('addLabelBtn').addEventListener('click', () => {
+      if (!cursorPing) return;
+      labels.push({
+        id: 'lbl_' + Date.now(),
+        species: document.getElementById('speciesSelect').value,
+        size: document.getElementById('sizeSelect').value,
+        notes: document.getElementById('labelNotes').value.trim(),
+        frame: cursorPing.frame || 0,
+        time_s: cursorPing.time_s,
+        latitude: cursorPing.lat,
+        longitude: cursorPing.lon,
+        depth_m: cursorPing.depth_m,
+        intensity: cursorPing.intensity,
+        source: cursorPing.source || 'user'
+      });
+      persistLabels();
+      renderLabelList();
+      document.getElementById('labelNotes').value = '';
+    });
+
+    document.getElementById('exportLabelsBtn').addEventListener('click', () => {
+      const payload = {
+        survey: surveyTitle,
+        source_csv: sourceCsv,
+        grid_size_note: '__GRID_LABEL__',
+        exported_at: new Date().toISOString(),
+        labels,
+        auto_detection_count: (fishData.features || []).length
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (sourceCsv.replace(/\.[^.]+$/, '') || 'survey') + '_fish_training_labels.json';
+      a.click();
+    });
+
+    document.getElementById('clearLabelsBtn').addEventListener('click', () => {
+      if (confirm('Remove all training labels for this survey?')) {
+        labels = [];
+        persistLabels();
+        renderLabelList();
+      }
+    });
+
+    renderLabelList();
   </script>
 </body>
 </html>

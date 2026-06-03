@@ -9,6 +9,11 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from survey_viz_data import (
+    DEFAULT_DASHBOARD_GRID_SIZE,
+    build_echogram_pings,
+    load_csv_track_geojson,
+)
 from map_visuals import (
     FISH_SIZE_LEGEND,
     depth_legend_stops,
@@ -26,6 +31,8 @@ class WebVisualizer:
         location_name: str = "Fishing Survey Area",
         output_file: Optional[Path] = None,
         depth_geojson_file: Optional[Path] = None,
+        csv_file: Optional[Path] = None,
+        grid_size: float = DEFAULT_DASHBOARD_GRID_SIZE,
     ) -> Path:
         """
         Create an HTML dashboard with interactive seabed + fish detection layers.
@@ -36,6 +43,8 @@ class WebVisualizer:
             location_name: Display name for the survey
             output_file: Optional output HTML path
             depth_geojson_file: Optional bathymetry/seabed heatmap GeoJSON
+            csv_file: Source survey CSV (route + echogram + labeling)
+            grid_size: Seabed grid cell size in degrees (smaller = finer map squares)
         """
         detections_file = Path(detections_file)
         if output_file is None:
@@ -96,9 +105,28 @@ class WebVisualizer:
             WebVisualizer._metric_card("Max depth", WebVisualizer._format_number(depth_stats.get("max_depth_m"), "m")),
             WebVisualizer._metric_card("Avg confidence", WebVisualizer._format_number(population.get("average_confidence"))),
         ])
+        grid_deg = depth_meta.get("grid_size_deg", grid_size)
+        grid_label = f"{grid_deg}° (~{int(float(grid_deg) * 111000 * 0.55)} m cells)"
+
+        csv_path = Path(csv_file) if csv_file else detections_file.with_suffix(".csv")
+        if not csv_path.is_file():
+            csv_path = detections_file.parent / detections_file.name.replace("_fish_detections.geojson", ".csv")
+        track_geo = {"type": "FeatureCollection", "features": []}
+        echogram_pings: List[Dict[str, Any]] = []
+        csv_name = csv_path.name if csv_path.is_file() else detections_file.name
+        if csv_path.is_file():
+            track_payload = load_csv_track_geojson(csv_path)
+            track_geo = {
+                "type": "FeatureCollection",
+                "features": track_payload.get("features", []),
+            }
+            echogram_pings = build_echogram_pings(csv_path)
+
         document = (
             template_path.read_text(encoding="utf-8")
             .replace("__TITLE__", title)
+            .replace("__GRID_LABEL__", html.escape(grid_label))
+            .replace("__CSV_NAME__", html.escape(csv_name))
             .replace("__METRICS_PRIMARY__", metrics_primary)
             .replace("__METRICS_SECONDARY__", metrics_secondary)
             .replace("__DEPTH_LEGEND__", depth_block)
@@ -106,6 +134,10 @@ class WebVisualizer:
             .replace("__ROWS__", rows)
             .replace("__FISH_GEOJSON__", fish_geojson)
             .replace("__SEABED_GEOJSON__", seabed_geojson)
+            .replace("__TRACK_GEOJSON__", json.dumps(track_geo))
+            .replace("__ECHOGRAM_PINGS__", json.dumps(echogram_pings))
+            .replace("__SURVEY_TITLE_JSON__", json.dumps(location_name))
+            .replace("__CSV_NAME_JSON__", json.dumps(csv_name))
             .replace("__HAS_SEABED__", str(has_seabed).lower())
         )
 
