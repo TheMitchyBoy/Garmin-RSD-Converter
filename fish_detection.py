@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass
 from collections import defaultdict
 
+from sonar_schema import HEURISTIC_DISCLAIMER, parse_sonar_row
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,7 +44,9 @@ class FishDetection:
 
 
 class FishDetector:
-    """Detect fish from sonar intensity patterns"""
+    """Detect heuristic sonar intensity signatures (not biological identification)."""
+
+    DISCLAIMER = HEURISTIC_DISCLAIMER
     
     # Heuristic thresholds for fish detection
     # These are tuned based on typical sonar responses to fish
@@ -75,7 +79,11 @@ class FishDetector:
         if output_file is None:
             output_file = csv_file.with_name(f"{csv_file.stem}_fish_detections.geojson")
         
-        logger.info(f"Detecting fish signatures (intensity range: {min_intensity}-{max_intensity})...")
+        logger.info(
+            "Detecting heuristic intensity signatures "
+            f"(intensity range: {min_intensity}-{max_intensity})..."
+        )
+        logger.info(f"Note: {FishDetector.DISCLAIMER}")
         
         detections: List[FishDetection] = []
         
@@ -83,38 +91,32 @@ class FishDetector:
             with open(csv_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    try:
-                        lat = float(row.get('latitude', '') or 0)
-                        lon = float(row.get('longitude', '') or 0)
-                        depth = float(row.get('depth_m', '') or 0)
-                        intensity = float(row.get('sonar_intensity_avg', '') or 0)
-                        intensity_max = float(row.get('sonar_intensity_max', '') or 0)
-                        frame_num = int(row.get('frame_number', '') or 0)
-                        
-                        if lat == 0 and lon == 0:
-                            continue
-                        
-                        # Check if this reading matches fish characteristics
-                        if min_intensity <= intensity <= max_intensity and \
-                           FishDetector.MIN_FISH_DEPTH <= depth <= FishDetector.MAX_FISH_DEPTH:
-                            
-                            size_category, confidence = FishDetector._classify_fish(
-                                intensity, intensity_max, depth
-                            )
-                            
-                            detection = FishDetection(
-                                latitude=lat,
-                                longitude=lon,
-                                depth=depth,
-                                intensity=intensity,
-                                confidence=confidence,
-                                size_category=size_category,
-                                frame_number=frame_num,
-                            )
-                            detections.append(detection)
-                    
-                    except (ValueError, TypeError):
+                    reading = parse_sonar_row(row)
+                    if reading is None:
                         continue
+
+                    depth = reading.depth_m or 0.0
+                    intensity = reading.sonar_intensity_avg or 0.0
+                    intensity_max = reading.sonar_intensity_max or 0.0
+                    frame_num = reading.frame_number or 0
+
+                    if min_intensity <= intensity <= max_intensity and \
+                       FishDetector.MIN_FISH_DEPTH <= depth <= FishDetector.MAX_FISH_DEPTH:
+
+                        size_category, confidence = FishDetector._classify_fish(
+                            intensity, intensity_max, depth
+                        )
+
+                        detection = FishDetection(
+                            latitude=reading.latitude,
+                            longitude=reading.longitude,
+                            depth=depth,
+                            intensity=intensity,
+                            confidence=confidence,
+                            size_category=size_category,
+                            frame_number=frame_num,
+                        )
+                        detections.append(detection)
             
             # Export detections as GeoJSON
             features = []
@@ -147,13 +149,13 @@ class FishDetector:
             logger.info(f"  Total detections: {len(detections)}")
             logger.info(f"  Exported to: {output_file}")
             
-            # Log detection summary
-            size_counts = defaultdict(int)
-            for detection in detections:
-                size_counts[detection.size_category] += 1
-            
-            for size, count in sorted(size_counts.items()):
-                logger.info(f"  {size}: {count} ({count/len(detections)*100:.1f}%)")
+            if detections:
+                size_counts = defaultdict(int)
+                for detection in detections:
+                    size_counts[detection.size_category] += 1
+
+                for size, count in sorted(size_counts.items()):
+                    logger.info(f"  {size}: {count} ({count/len(detections)*100:.1f}%)")
             
             return output_file, detections
         

@@ -9,6 +9,7 @@ import logging
 import csv
 from pathlib import Path
 
+from sonar_schema import HEURISTIC_DISCLAIMER, StreamingNumericStats, setup_logging
 from sonar_converter_streaming import convert_sonar_rsd_to_csv
 from analysis_tools import MapGenerator
 from heatmap_generator import HeatmapGenerator
@@ -16,18 +17,18 @@ from fish_detection import FishDetector
 from population_health import PopulationHealthAnalytics
 from web_visualizer import WebVisualizer
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
 def main():
+    setup_logging()
     parser = argparse.ArgumentParser(
         description='Convert Garmin Sonar RSD files and generate maps, heatmaps, and reports',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
+        epilog=f'''
+Note: Fish detection and population health outputs are heuristic sonar analyses.
+{HEURISTIC_DISCLAIMER}
+
 Examples:
   # Convert sonar file to CSV
   python sonar_cli.py convert Sonar000.RSD
@@ -38,7 +39,7 @@ Examples:
   # Generate heatmaps from an existing CSV
   python sonar_cli.py heatmap sonar_data.csv --all
 
-  # Detect fish signatures and create a health report
+  # Detect intensity signatures and create a health report
   python sonar_cli.py fish detect sonar_data.csv
   python sonar_cli.py health sonar_data_fish_detections.geojson --report
         '''
@@ -70,9 +71,9 @@ Examples:
                             help='Grid cell size in degrees (default: 0.01)')
 
     # Fish detection command
-    fish_cmd = subparsers.add_parser('fish', help='Fish detection and analysis')
+    fish_cmd = subparsers.add_parser('fish', help='Heuristic intensity signature detection')
     fish_sub = fish_cmd.add_subparsers(dest='fish_command')
-    detect_cmd = fish_sub.add_parser('detect', help='Detect fish from sonar data')
+    detect_cmd = fish_sub.add_parser('detect', help='Detect intensity signatures from sonar data')
     detect_cmd.add_argument('input', help='Input CSV file')
     detect_cmd.add_argument('--min-intensity', type=int, default=40,
                            help='Minimum sonar intensity (default: 40)')
@@ -80,7 +81,7 @@ Examples:
                            help='Maximum sonar intensity (default: 200)')
 
     # Population health command
-    health_cmd = subparsers.add_parser('health', help='Population health analysis')
+    health_cmd = subparsers.add_parser('health', help='Heuristic population metrics from detections')
     health_cmd.add_argument('input', help='Fish detections GeoJSON file')
     health_cmd.add_argument('--location', default='Fishing Area',
                            help='Location name (default: Fishing Area)')
@@ -164,7 +165,7 @@ def cmd_convert(args):
 
 
 def cmd_analyze(args):
-    """Execute analyze command"""
+    """Execute analyze command using streaming statistics."""
     csv_file = Path(args.input)
     
     if not csv_file.exists():
@@ -173,13 +174,13 @@ def cmd_analyze(args):
     
     logger.info(f"Analyzing {csv_file}...")
     
-    # Analyze CSV
-    depths = []
-    temps = []
-    frequencies = []
-    lats = []
-    lons = []
+    depth_stats = StreamingNumericStats()
+    temp_stats = StreamingNumericStats()
+    freq_stats = StreamingNumericStats()
+    lat_stats = StreamingNumericStats()
+    lon_stats = StreamingNumericStats()
     total_rows = 0
+    freq_values = set()
     
     try:
         with open(csv_file) as f:
@@ -189,15 +190,18 @@ def cmd_analyze(args):
                 
                 try:
                     if row.get('depth_m') and row['depth_m'] != '':
-                        depths.append(float(row['depth_m']))
+                        depth_stats.add(float(row['depth_m']))
                     if row.get('water_temp_c') and row['water_temp_c'] != '':
-                        temps.append(float(row['water_temp_c']))
+                        temp_stats.add(float(row['water_temp_c']))
                     if row.get('sonar_frequency_khz') and row['sonar_frequency_khz'] != '':
-                        frequencies.append(float(row['sonar_frequency_khz']))
+                        freq = float(row['sonar_frequency_khz'])
+                        freq_stats.add(freq)
+                        if len(freq_values) < 1000:
+                            freq_values.add(round(freq))
                     if row.get('latitude') and row['latitude'] != '':
-                        lats.append(float(row['latitude']))
+                        lat_stats.add(float(row['latitude']))
                     if row.get('longitude') and row['longitude'] != '':
-                        lons.append(float(row['longitude']))
+                        lon_stats.add(float(row['longitude']))
                 except (ValueError, TypeError):
                     continue
         
@@ -206,32 +210,33 @@ def cmd_analyze(args):
         print(f"File Size: {csv_file.stat().st_size / 1024 / 1024:.1f} MB")
         
         print(f"\nDepth Data:")
-        print(f"  Records: {len(depths):,}")
-        if depths:
-            print(f"  Range: {min(depths):.1f}m - {max(depths):.1f}m")
-            print(f"  Average: {sum(depths)/len(depths):.1f}m")
-            print(f"  Median: {sorted(depths)[len(depths)//2]:.1f}m")
+        print(f"  Records: {depth_stats.count:,}")
+        if depth_stats.count:
+            print(f"  Range: {depth_stats.min_val:.1f}m - {depth_stats.max_val:.1f}m")
+            print(f"  Average: {depth_stats.mean:.1f}m")
+            median = depth_stats.median()
+            if median is not None:
+                print(f"  Median: {median:.1f}m (approx. from reservoir sample)")
         
         print(f"\nWater Temperature:")
-        print(f"  Records: {len(temps):,}")
-        if temps:
-            print(f"  Range: {min(temps):.1f}°C - {max(temps):.1f}°C")
-            print(f"  Average: {sum(temps)/len(temps):.1f}°C")
+        print(f"  Records: {temp_stats.count:,}")
+        if temp_stats.count:
+            print(f"  Range: {temp_stats.min_val:.1f}°C - {temp_stats.max_val:.1f}°C")
+            print(f"  Average: {temp_stats.mean:.1f}°C")
         
         print(f"\nSonar Frequency:")
-        print(f"  Records: {len(frequencies):,}")
-        if frequencies:
-            freq_set = set(round(f) for f in frequencies)
-            print(f"  Unique values: {len(freq_set)}")
-            print(f"  Range: {min(frequencies):.0f} - {max(frequencies):.0f} kHz")
+        print(f"  Records: {freq_stats.count:,}")
+        if freq_stats.count:
+            print(f"  Unique values: {len(freq_values)}")
+            print(f"  Range: {freq_stats.min_val:.0f} - {freq_stats.max_val:.0f} kHz")
         
         print(f"\nGPS Coverage:")
-        print(f"  Latitude records: {len(lats):,}")
-        print(f"  Longitude records: {len(lons):,}")
-        if lats:
-            print(f"  Lat range: {min(lats):.6f} - {max(lats):.6f}")
-        if lons:
-            print(f"  Lon range: {min(lons):.6f} - {max(lons):.6f}")
+        print(f"  Latitude records: {lat_stats.count:,}")
+        print(f"  Longitude records: {lon_stats.count:,}")
+        if lat_stats.count:
+            print(f"  Lat range: {lat_stats.min_val:.6f} - {lat_stats.max_val:.6f}")
+        if lon_stats.count:
+            print(f"  Lon range: {lon_stats.min_val:.6f} - {lon_stats.max_val:.6f}")
         
     except Exception as e:
         logger.error(f"Error analyzing CSV: {e}")
@@ -290,7 +295,8 @@ def cmd_fish(args):
             max_intensity=args.max_intensity,
         )
 
-        print("✓ Fish detection complete!")
+        print("✓ Heuristic intensity signature detection complete!")
+        print(f"  Note: {HEURISTIC_DISCLAIMER}")
         print(f"  Total detections: {len(detections):,}")
         print(f"  Output: {output_file}")
 
@@ -307,11 +313,12 @@ def cmd_health(args):
 
     metrics = PopulationHealthAnalytics.analyze_population_metrics(detection_file)
 
-    print("✓ Population analysis complete!")
+    print("✓ Heuristic population analysis complete!")
+    print(f"  Note: {HEURISTIC_DISCLAIMER}")
     print(f"  Total detections: {metrics.get('total_detections', 0):,}")
 
     health = metrics.get('health_indicators', {})
-    print(f"  Overall Health: {health.get('overall_status', 'Unknown')} "
+    print(f"  Composite Score: {health.get('overall_status', 'Unknown')} "
           f"({health.get('overall_health_score', 0)}/100)")
 
     if args.report:
@@ -363,6 +370,7 @@ def cmd_pipeline(args):
         return 1
 
     print("Starting full analysis pipeline...")
+    print(f"Note: {HEURISTIC_DISCLAIMER}")
 
     csv_file, frame_count = convert_sonar_rsd_to_csv(input_file, stride=args.stride)
     print(f"✓ CSV created: {csv_file}")
@@ -380,7 +388,7 @@ def cmd_pipeline(args):
     print(f"✓ Heatmaps: {intensity_hm}, {depth_hm}, {temperature_hm}")
 
     detections_file, detections = FishDetector.detect_fish(csv_file)
-    print(f"✓ Fish detections: {len(detections):,} ({detections_file})")
+    print(f"✓ Intensity signatures: {len(detections):,} ({detections_file})")
 
     metrics = PopulationHealthAnalytics.analyze_population_metrics(detections_file)
     report_file = PopulationHealthAnalytics.generate_public_report(

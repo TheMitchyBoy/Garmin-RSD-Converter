@@ -1,0 +1,49 @@
+name = "garmin-sonar-rsd-converter"
+version = "1.1.0"
+description = "Convert Garmin Sonar .RSD files to CSV, maps, heatmaps, and heuristic analysis reports"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Garmin Sonar RSD Converter Contributors" }]
+keywords = ["garmin", "sonar", "rsd", "bathymetry", "geojson"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+
+[project.scripts]
+garmin-rsd = "sonar_cli:main"
+
+[project.urls]
+Homepage = "https://github.com/TheMitchyBoy/Garmin-RSD-Converter"
+Repository = "https://github.com/TheMitchyBoy/Garmin-RSD-Converter"
+
+[tool.setuptools]
+py-modules = [
+    "analysis_tools",
+    "fish_detection",
+    "heatmap_generator",
+    "population_health",
+    "sonar_cli",
+    "sonar_converter",
+    "sonar_converter_streaming",
+    "sonar_schema",
+    "web_visualizer",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]

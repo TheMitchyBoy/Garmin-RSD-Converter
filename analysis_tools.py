@@ -4,10 +4,13 @@ Mapping utilities for Garmin sonar CSV output.
 """
 
 import csv
+import json
 import math
 from pathlib import Path
 from typing import Optional, Tuple
 import logging
+
+from sonar_schema import parse_sonar_row
 
 logger = logging.getLogger(__name__)
 
@@ -38,22 +41,18 @@ class MapGenerator:
             with open(csv_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    try:
-                        lat = float(row.get('latitude', '') or 0)
-                        lon = float(row.get('longitude', '') or 0)
-                        if lat == 0 and lon == 0:
-                            continue
-
-                        coordinates.append([lon, lat])
-                        properties = {k: v for k, v in row.items() if k not in ['latitude', 'longitude']}
-                        feature = {
-                            'type': 'Feature',
-                            'geometry': {'type': 'Point', 'coordinates': [lon, lat]},
-                            'properties': properties,
-                        }
-                        features.append(feature)
-                    except (ValueError, TypeError):
+                    reading = parse_sonar_row(row)
+                    if reading is None:
                         continue
+
+                    coordinates.append([reading.longitude, reading.latitude])
+                    properties = {k: v for k, v in row.items() if k not in ['latitude', 'longitude']}
+                    feature = {
+                        'type': 'Feature',
+                        'geometry': {'type': 'Point', 'coordinates': [reading.longitude, reading.latitude]},
+                        'properties': properties,
+                    }
+                    features.append(feature)
 
             if coordinates:
                 features.insert(0, {
@@ -63,7 +62,6 @@ class MapGenerator:
                 })
 
             geojson = {'type': 'FeatureCollection', 'features': features}
-            import json
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(geojson, f, indent=2)
 
@@ -101,15 +99,11 @@ class MapGenerator:
             with open(csv_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    try:
-                        lat = float(row.get('latitude', '') or 0)
-                        lon = float(row.get('longitude', '') or 0)
-                        elev = float(row.get('elevation', '') or 0)
-                        if lat == 0 and lon == 0:
-                            continue
-                        kml_content += f"          {lon},{lat},{elev}\n"
-                    except (ValueError, TypeError):
+                    reading = parse_sonar_row(row)
+                    if reading is None:
                         continue
+                    elev = reading.elevation_m if reading.elevation_m is not None else 0
+                    kml_content += f"          {reading.longitude},{reading.latitude},{elev}\n"
 
             kml_content += '''        </coordinates>
       </LineString>
@@ -149,18 +143,14 @@ class MapGenerator:
             with open(csv_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    try:
-                        lat = float(row.get('latitude', '') or 0)
-                        lon = float(row.get('longitude', '') or 0)
-                        elev = float(row.get('elevation', '') or 0)
-                        if lat == 0 and lon == 0:
-                            continue
-                        gpx_content += f'''      <trkpt lat="{lat}" lon="{lon}">
+                    reading = parse_sonar_row(row)
+                    if reading is None:
+                        continue
+                    elev = reading.elevation_m if reading.elevation_m is not None else 0
+                    gpx_content += f'''      <trkpt lat="{reading.latitude}" lon="{reading.longitude}">
         <ele>{elev}</ele>
       </trkpt>
 '''
-                    except (ValueError, TypeError):
-                        continue
 
             gpx_content += '''    </trkseg>
   </trk>
@@ -185,43 +175,34 @@ class MapGenerator:
         origin_lat = None
         origin_lon = None
 
-        def parse_float(value: Optional[str]) -> Optional[float]:
-            try:
-                if value is None or value == '':
-                    return None
-                return float(value)
-            except (ValueError, TypeError):
-                return None
-
         with open(csv_file, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                lat = parse_float(row.get('latitude'))
-                lon = parse_float(row.get('longitude'))
-                if lat is None or lon is None:
+                reading = parse_sonar_row(row)
+                if reading is None:
                     continue
+                if reading.depth_m is None:
+                    continue
+
                 if origin_lat is None or origin_lon is None:
-                    origin_lat = lat
-                    origin_lon = lon
+                    origin_lat = reading.latitude
+                    origin_lon = reading.longitude
 
-                depth = parse_float(row.get('depth_m'))
-                elevation = parse_float(row.get('elevation'))
-                if depth is None and elevation is None:
-                    continue
-
-                x, y = MapGenerator._wgs84_to_local_xy(lat, lon, origin_lat, origin_lon)
-                z = -depth if depth is not None else elevation
+                x, y = MapGenerator._wgs84_to_local_xy(
+                    reading.latitude, reading.longitude, origin_lat, origin_lon
+                )
+                z = -reading.depth_m
 
                 points.append({
                     'x': x,
                     'y': y,
                     'z': z,
-                    'intensity_avg': parse_float(row.get('sonar_intensity_avg')) or 0.0,
-                    'intensity_max': parse_float(row.get('sonar_intensity_max')) or 0.0,
-                    'water_temp_c': parse_float(row.get('water_temp_c')) or 0.0,
-                    'sonar_frequency_khz': parse_float(row.get('sonar_frequency_khz')) or 0.0,
-                    'beam_count': int(parse_float(row.get('beam_count')) or 0),
-                    'frame_number': int(parse_float(row.get('frame_number')) or 0),
+                    'intensity_avg': reading.sonar_intensity_avg or 0.0,
+                    'intensity_max': reading.sonar_intensity_max or 0.0,
+                    'water_temp_c': reading.water_temp_c or 0.0,
+                    'sonar_frequency_khz': reading.sonar_frequency_khz or 0.0,
+                    'beam_count': reading.beam_count,
+                    'frame_number': reading.frame_number or 0,
                 })
 
         if not points:
