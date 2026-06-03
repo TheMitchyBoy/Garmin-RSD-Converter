@@ -16,6 +16,7 @@ from survey_viz_data import (
 )
 from map_visuals import (
     FISH_SIZE_LEGEND,
+    fish_species_select_html,
     depth_legend_stops,
     load_geojson_features,
 )
@@ -131,6 +132,7 @@ class WebVisualizer:
             .replace("__METRICS_PRIMARY__", metrics_primary)
             .replace("__METRICS_SECONDARY__", metrics_secondary)
             .replace("__DEPTH_LEGEND__", depth_block)
+            .replace("__SPECIES_OPTIONS__", fish_species_select_html())
             .replace("__FISH_LEGEND__", fish_legend_html)
             .replace("__ROWS__", rows)
             .replace("__FISH_GEOJSON__", fish_geojson)

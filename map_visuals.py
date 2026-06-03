@@ -17,6 +17,37 @@ FISH_SIZE_LEGEND: Dict[str, Dict[str, str]] = {
     "school": {"color": "#7f1d1d", "label": "School / high intensity"},
 }
 
+# Species options for training labels (value, display label)
+FISH_SPECIES_OPTIONS: List[Tuple[str, str]] = [
+    ("unknown", "Unknown"),
+    ("salmon", "Salmon"),
+    ("chinook_salmon", "Chinook salmon"),
+    ("coho_salmon", "Coho salmon"),
+    ("rockfish", "Rockfish"),
+    ("pacific_cod", "Pacific cod"),
+    ("halibut", "Halibut"),
+    ("lingcod", "Lingcod"),
+    ("pollock", "Pollock"),
+    ("sablefish", "Sablefish (black cod)"),
+    ("herring", "Herring"),
+    ("flounder", "Flounder / sole"),
+    ("skate", "Skate"),
+    ("crab", "Crab"),
+    ("dogfish", "Dogfish / shark"),
+    ("school", "School (mixed species)"),
+    ("bait", "Bait / clutter / debris"),
+    ("other", "Other"),
+]
+
+
+def fish_species_select_html(*, default: str = "unknown") -> str:
+    """Build <option> elements for the species labeling dropdown."""
+    lines = []
+    for value, label in FISH_SPECIES_OPTIONS:
+        selected = ' selected' if value == default else ''
+        lines.append(f'<option value="{value}"{selected}>{label}</option>')
+    return "\n            ".join(lines)
+
 
 def bathymetry_color(depth_m: float, min_depth: float, max_depth: float) -> str:
     """
