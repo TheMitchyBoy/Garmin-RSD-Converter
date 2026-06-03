@@ -134,7 +134,15 @@ def cmd_convert(args):
     """Execute convert command"""
     input_file = Path(args.input)
     output_file = Path(args.output) if args.output else None
-    
+
+    if not input_file.exists():
+        logger.error(f"File not found: {input_file}")
+        return 1
+
+    if args.stride < 1:
+        logger.error(f"--stride must be a positive integer (got {args.stride})")
+        return 1
+
     logger.info(f"Converting {input_file}...")
     csv_file, frame_count = convert_sonar_rsd_to_csv(input_file, output_file, stride=args.stride)
     
@@ -248,6 +256,10 @@ def cmd_heatmap(args):
         logger.error(f"File not found: {csv_file}")
         return 1
 
+    if args.grid_size <= 0:
+        logger.error(f"--grid-size must be positive (got {args.grid_size})")
+        return 1
+
     outputs = []
 
     if args.all or args.intensity:
@@ -282,6 +294,13 @@ def cmd_fish(args):
 
         if not csv_file.exists():
             logger.error(f"File not found: {csv_file}")
+            return 1
+
+        if args.min_intensity >= args.max_intensity:
+            logger.error(
+                f"--min-intensity ({args.min_intensity}) must be less than "
+                f"--max-intensity ({args.max_intensity})"
+            )
             return 1
 
         output_file, detections = FishDetector.detect_fish(
