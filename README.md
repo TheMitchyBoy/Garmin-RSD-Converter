@@ -85,6 +85,36 @@ python sonar_cli.py dashboard sonar_data.csv --location "My Lake"
 python sonar_cli.py pipeline Sonar000.RSD --location "My Lake"
 ```
 
+### Bulk upload and batch processing
+
+Process every RSD in a folder (recursive by default):
+
+```bash
+python sonar_cli.py batch convert ./recordings --output-dir ./exports --maps all
+python sonar_cli.py batch pipeline ./recordings --output-dir ./analysis
+python sonar_cli.py batch list ./recordings
+```
+
+Multiple files or globs work on `convert` and `pipeline` too:
+
+```bash
+python sonar_cli.py convert Sonar001.RSD Sonar002.RSD --output-dir ./exports
+python sonar_cli.py convert "./recordings/*.RSD" --maps geojson
+```
+
+**Web upload UI** — drag-and-drop one or many RSD files in the browser:
+
+```bash
+python sonar_cli.py upload
+# Open http://127.0.0.1:8765/
+```
+
+Or run the server directly:
+
+```bash
+python sonar_upload_server.py --port 8765 --output-dir ./output
+```
+
 ## 3D Export
 
 The mapping exports convert sonar CSV rows into portable spatial formats:
@@ -98,6 +128,8 @@ The mapping exports convert sonar CSV rows into portable spatial formats:
 The repository contains a single sonar-focused CLI:
 
 - `sonar_cli.py` — convert SONAR RSD to CSV, analyze sonar CSV files, export maps, generate heatmaps, detect fish signatures, and create reports/dashboards
+- `batch_processor.py` — discover and bulk-process multiple RSD files
+- `sonar_upload_server.py` — local web UI for drag-and-drop upload and bulk conversion
 
 ## Files
 

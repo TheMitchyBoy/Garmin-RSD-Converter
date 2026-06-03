@@ -15,6 +15,12 @@ from heatmap_generator import HeatmapGenerator
 from fish_detection import FishDetector
 from population_health import PopulationHealthAnalytics
 from web_visualizer import WebVisualizer
+from batch_processor import (
+    batch_convert,
+    batch_pipeline,
+    discover_rsd_files,
+    format_batch_summary,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,6 +50,15 @@ Examples:
 
   # Interactive seabed + fish survey map
   python sonar_cli.py map sonar_data.csv --location "Lake Survey"
+
+  # Bulk convert every RSD in a folder
+  python sonar_cli.py batch convert ./recordings --output-dir ./exports --maps all
+
+  # Bulk full pipeline on multiple files
+  python sonar_cli.py batch pipeline Sonar001.RSD Sonar002.RSD --location "Lake Survey"
+
+  # Web upload UI (drag-and-drop, multiple files)
+  python sonar_cli.py upload
         '''
     )
     
@@ -51,8 +66,19 @@ Examples:
     
     # Convert command
     convert_cmd = subparsers.add_parser('convert', help='Convert Sonar RSD to CSV')
-    convert_cmd.add_argument('input', help='Input Sonar RSD file')
-    convert_cmd.add_argument('-o', '--output', help='Output CSV file')
+    convert_cmd.add_argument(
+        'input', nargs='+',
+        help='One or more RSD files, directories, or glob patterns (e.g. *.RSD)',
+    )
+    convert_cmd.add_argument('-o', '--output', help='Output CSV file (single input only)')
+    convert_cmd.add_argument(
+        '--output-dir', type=Path,
+        help='Output directory when converting multiple files or a folder',
+    )
+    convert_cmd.add_argument(
+        '--no-recursive', action='store_true',
+        help='When input is a directory, do not search subfolders',
+    )
     convert_cmd.add_argument('--stride', type=int, default=256,
                            help='Sample every N bytes (default: 256)')
     convert_cmd.add_argument('--maps', nargs='+', choices=['ply', 'geojson', 'kml', 'gpx', 'all'],
@@ -112,11 +138,76 @@ Examples:
 
     # Pipeline command
     pipeline_cmd = subparsers.add_parser('pipeline', help='Run the full sonar analysis workflow')
-    pipeline_cmd.add_argument('input', help='Input Sonar RSD file')
-    pipeline_cmd.add_argument('--location', default='Survey Area',
-                             help='Location name for reports')
+    pipeline_cmd.add_argument(
+        'input', nargs='+',
+        help='One or more RSD files, directories, or glob patterns',
+    )
+    pipeline_cmd.add_argument(
+        '--location', default=None,
+        help='Location name for reports (default: Survey Area, or file name in batch)',
+    )
     pipeline_cmd.add_argument('--stride', type=int, default=256,
                              help='Conversion stride (default: 256)')
+    pipeline_cmd.add_argument(
+        '--output-dir', type=Path,
+        help='Write CSV and outputs into this directory (batch / multi-file)',
+    )
+    pipeline_cmd.add_argument(
+        '--no-recursive', action='store_true',
+        help='When input is a directory, do not search subfolders',
+    )
+
+    # Batch command (explicit bulk workflows)
+    batch_cmd = subparsers.add_parser(
+        'batch', help='Bulk convert or analyze multiple RSD files',
+    )
+    batch_sub = batch_cmd.add_subparsers(dest='batch_command')
+
+    batch_convert_cmd = batch_sub.add_parser('convert', help='Bulk convert RSD files to CSV')
+    batch_convert_cmd.add_argument(
+        'sources', nargs='+',
+        help='RSD files, directories, or glob patterns',
+    )
+    batch_convert_cmd.add_argument(
+        '--output-dir', type=Path,
+        help='Directory for CSV and map outputs (default: next to each RSD)',
+    )
+    batch_convert_cmd.add_argument('--stride', type=int, default=256)
+    batch_convert_cmd.add_argument(
+        '--maps', nargs='+', choices=['ply', 'geojson', 'kml', 'gpx', 'all'],
+        help='Generate map exports for each file',
+    )
+    batch_convert_cmd.add_argument(
+        '--no-recursive', action='store_true',
+        help='Do not search subdirectories when a source is a folder',
+    )
+    batch_convert_cmd.add_argument(
+        '--fail-fast', action='store_true',
+        help='Stop on first conversion error',
+    )
+
+    batch_pipeline_cmd = batch_sub.add_parser(
+        'pipeline', help='Run full pipeline on each RSD file',
+    )
+    batch_pipeline_cmd.add_argument('sources', nargs='+')
+    batch_pipeline_cmd.add_argument('--output-dir', type=Path)
+    batch_pipeline_cmd.add_argument('--location', default=None)
+    batch_pipeline_cmd.add_argument('--stride', type=int, default=256)
+    batch_pipeline_cmd.add_argument('--no-recursive', action='store_true')
+    batch_pipeline_cmd.add_argument('--fail-fast', action='store_true')
+
+    batch_list_cmd = batch_sub.add_parser('list', help='List RSD files that would be processed')
+    batch_list_cmd.add_argument('sources', nargs='+')
+    batch_list_cmd.add_argument('--no-recursive', action='store_true')
+
+    # Upload web UI
+    upload_cmd = subparsers.add_parser(
+        'upload', help='Start local web UI for drag-and-drop RSD upload',
+    )
+    upload_cmd.add_argument('--host', default='127.0.0.1')
+    upload_cmd.add_argument('--port', type=int, default=8765)
+    upload_cmd.add_argument('--uploads-dir', type=Path, default=Path('uploads'))
+    upload_cmd.add_argument('--output-dir', type=Path, default=Path('output'))
     
     args = parser.parse_args()
     
@@ -141,6 +232,10 @@ Examples:
             return cmd_map(args)
         elif args.command == 'pipeline':
             return cmd_pipeline(args)
+        elif args.command == 'batch':
+            return cmd_batch(args)
+        elif args.command == 'upload':
+            return cmd_upload(args)
     except Exception as e:
         logger.error(f"Error: {e}")
         return 1
@@ -149,13 +244,25 @@ Examples:
 
 
 def cmd_convert(args):
-    """Execute convert command"""
-    input_file = Path(args.input)
+    """Execute convert command (single or multiple RSD inputs)."""
+    sources = args.input
+    if len(sources) > 1 or Path(sources[0]).is_dir() or any('*' in s or '?' in s for s in sources):
+        summary = batch_convert(
+            sources,
+            output_dir=getattr(args, 'output_dir', None),
+            stride=args.stride,
+            map_formats=args.maps,
+            recursive=not getattr(args, 'no_recursive', False),
+        )
+        print(format_batch_summary(summary))
+        return 0 if summary.failed == 0 else 1
+
+    input_file = Path(sources[0])
     output_file = Path(args.output) if args.output else None
-    
+
     logger.info(f"Converting {input_file}...")
     csv_file, frame_count = convert_sonar_rsd_to_csv(input_file, output_file, stride=args.stride)
-    
+
     print(f"✓ Conversion complete!")
     print(f"  Output: {csv_file}")
     print(f"  Frames extracted: {frame_count:,}")
@@ -407,8 +514,20 @@ def cmd_map(args):
 
 
 def cmd_pipeline(args):
-    """Execute full analysis pipeline"""
-    input_file = Path(args.input)
+    """Execute full analysis pipeline (single or multiple RSD inputs)."""
+    sources = args.input
+    if len(sources) > 1 or Path(sources[0]).is_dir() or any('*' in s or '?' in s for s in sources):
+        summary = batch_pipeline(
+            sources,
+            output_dir=getattr(args, 'output_dir', None),
+            stride=args.stride,
+            location=args.location,
+            recursive=not getattr(args, 'no_recursive', False),
+        )
+        print(format_batch_summary(summary))
+        return 0 if summary.failed == 0 else 1
+
+    input_file = Path(sources[0])
 
     if not input_file.exists():
         logger.error(f"File not found: {input_file}")
@@ -435,14 +554,15 @@ def cmd_pipeline(args):
     print(f"✓ Fish detections: {len(detections):,} ({detections_file})")
 
     metrics = PopulationHealthAnalytics.analyze_population_metrics(detections_file)
+    location_name = args.location or 'Survey Area'
     report_file = PopulationHealthAnalytics.generate_public_report(
         metrics,
-        location_name=args.location,
+        location_name=location_name,
     )
     dashboard_file = WebVisualizer.create_dashboard(
         detections_file,
         metrics,
-        location_name=args.location,
+        location_name=location_name,
         depth_geojson_file=depth_hm,
     )
 
@@ -450,6 +570,65 @@ def cmd_pipeline(args):
     print(f"  Health report: {report_file}")
     print(f"  Dashboard: {dashboard_file}")
 
+    return 0
+
+
+def cmd_batch(args):
+    """Execute batch subcommands."""
+    if not args.batch_command:
+        print("Batch command requires a subcommand: convert, pipeline, or list")
+        return 1
+
+    recursive = not args.no_recursive
+
+    if args.batch_command == 'list':
+        files = discover_rsd_files(args.sources, recursive=recursive)
+        if not files:
+            print("No RSD files found.")
+            return 1
+        print(f"Found {len(files)} RSD file(s):")
+        for path in files:
+            size_mb = path.stat().st_size / 1024 / 1024
+            print(f"  {path} ({size_mb:.1f} MB)")
+        return 0
+
+    continue_on_error = not getattr(args, 'fail_fast', False)
+
+    if args.batch_command == 'convert':
+        summary = batch_convert(
+            args.sources,
+            output_dir=args.output_dir,
+            stride=args.stride,
+            map_formats=args.maps,
+            recursive=recursive,
+            continue_on_error=continue_on_error,
+        )
+    elif args.batch_command == 'pipeline':
+        summary = batch_pipeline(
+            args.sources,
+            output_dir=args.output_dir,
+            stride=args.stride,
+            location=args.location,
+            recursive=recursive,
+            continue_on_error=continue_on_error,
+        )
+    else:
+        return 1
+
+    print(format_batch_summary(summary))
+    return 0 if summary.failed == 0 else 1
+
+
+def cmd_upload(args):
+    """Start the local RSD upload web server."""
+    from sonar_upload_server import run_server
+
+    run_server(
+        host=args.host,
+        port=args.port,
+        uploads_dir=args.uploads_dir,
+        output_dir=args.output_dir,
+    )
     return 0
 
 

@@ -26,6 +26,26 @@ cd /path/to/Garmin-RSD-Converter
 
 ## Basic Usage
 
+### Bulk upload (web UI)
+
+For drag-and-drop of one or many RSD files:
+
+```bash
+python3 sonar_cli.py upload
+```
+
+Open `http://127.0.0.1:8765/`, select files, and choose **Convert** or **Full pipeline**. Outputs are written under `./output/<session-id>/`.
+
+### Bulk convert from the command line
+
+```bash
+# All RSD files in a folder
+python3 sonar_cli.py batch convert ./recordings --output-dir ./exports --maps all
+
+# Preview which files will run
+python3 sonar_cli.py batch list ./recordings
+```
+
 ### Convert Sonar File to CSV
 
 ```bash
