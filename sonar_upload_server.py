@@ -82,6 +82,8 @@ def _relative_output_path(session_dir: Path, artifact: Path) -> str:
 
 def _classify_output_artifact(artifact: Path) -> Dict[str, str]:
     name = artifact.name.lower()
+    if name.endswith('.html') and ('seabed_3d' in name or '3d_seabed' in name):
+        return {'type': 'seabed_3d', 'label': '3D seabed chart'}
     if name.endswith('.html') and 'dashboard' in name:
         return {'type': 'dashboard', 'label': 'Analytics dashboard'}
     if name.endswith('_fish_detections.geojson'):

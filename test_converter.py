@@ -120,6 +120,11 @@ class TestMapGenerator(unittest.TestCase):
         self.assertIn('health_indicators', metrics)
 
         depth_file = HeatmapGenerator.create_depth_heatmap(csv_file)
+        seabed_3d = WebVisualizer.create_seabed_3d_chart(
+            depth_file,
+            location_name='Test Lake',
+            output_file=self.temp_path / 'seabed_3d_test_lake.html',
+        )
         dashboard_file = WebVisualizer.create_dashboard(
             detections_file,
             metrics,
@@ -127,9 +132,13 @@ class TestMapGenerator(unittest.TestCase):
             output_file=self.temp_path / 'dashboard.html',
             depth_geojson_file=depth_file,
         )
+        seabed_content = seabed_3d.read_text(encoding='utf-8')
         content = dashboard_file.read_text(encoding='utf-8')
+        self.assertTrue(seabed_3d.exists())
+        self.assertIn('Plotly.newPlot', seabed_content)
+        self.assertIn('mesh3d', seabed_content)
         self.assertTrue(dashboard_file.exists())
-        self.assertIn('Sonar Survey Dashboard', content)
+        self.assertIn('Survey analytics', content)
         self.assertIn('leaflet', content)
         self.assertIn('Seabed depth', content)
         self.assertIn('Fish detections', content)
