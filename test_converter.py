@@ -16,7 +16,10 @@ from web_visualizer import WebVisualizer
 from map_visuals import bathymetry_color, grid_cell_polygon
 from geo_utils import decode_garmin_coordinate_pair
 from sonar_converter import SonarRSDParser
-from sonar_converter_streaming import SonarRSDStreamingParser
+from sonar_converter_streaming import SonarRSDStreamingParser, validate_rsd_file
+from survey_tools import merge_csv_files, compare_surveys, compute_track_quality
+from geotiff_export import GeoTiffWriter
+from las_export import LasExporter
 
 
 class TestMapGenerator(unittest.TestCase):
@@ -184,6 +187,80 @@ class TestMapGenerator(unittest.TestCase):
             f.write('40.7129,-74.0059,12.5,125.0,160.0,18.3,200.0,32,2\n')
             f.write('40.7130,-74.0058,0.0,5.0,8.0,18.4,200.0,32,3\n')
         return csv_file
+
+    def test_depth_contours_export(self):
+        csv_file = self._write_full_sonar_csv()
+        contour_file = HeatmapGenerator.create_depth_contours(csv_file, interval_m=2.0)
+        self.assertTrue(contour_file.exists())
+        data = json.loads(contour_file.read_text(encoding='utf-8'))
+        self.assertEqual(data['type'], 'FeatureCollection')
+        self.assertIn('contour_interval_m', data['properties'])
+
+    def test_fish_schools_and_aggregate_exports(self):
+        csv_file = self._write_full_sonar_csv()
+        _, detections = FishDetector.detect_fish(csv_file)
+        schools_file = FishDetector.export_fish_schools_geojson(
+            detections, self.temp_path / 'schools.geojson',
+        )
+        agg_file = FishDetector.export_fish_aggregate_geojson(
+            detections, self.temp_path / 'aggregate.geojson',
+        )
+        self.assertTrue(schools_file.exists())
+        self.assertTrue(agg_file.exists())
+        schools_data = json.loads(schools_file.read_text(encoding='utf-8'))
+        agg_data = json.loads(agg_file.read_text(encoding='utf-8'))
+        self.assertEqual(schools_data['type'], 'FeatureCollection')
+        self.assertEqual(agg_data['type'], 'FeatureCollection')
+
+    def test_merge_and_compare_surveys(self):
+        csv_a = self.temp_path / 'a.csv'
+        csv_b = self.temp_path / 'b.csv'
+        with open(csv_a, 'w', encoding='utf-8', newline='') as f:
+            f.write('latitude,longitude,depth_m,sonar_intensity_avg,frame_number\n')
+            f.write('40.7100,-74.0100,5.0,80.0,1\n')
+            f.write('40.7110,-74.0090,6.0,90.0,2\n')
+        with open(csv_b, 'w', encoding='utf-8', newline='') as f:
+            f.write('latitude,longitude,depth_m,sonar_intensity_avg,frame_number\n')
+            f.write('40.7100,-74.0100,7.0,85.0,1\n')
+
+        merged = merge_csv_files([csv_a, csv_b], self.temp_path / 'merged.csv')
+        self.assertTrue(merged.exists())
+        merged_lines = merged.read_text(encoding='utf-8').strip().splitlines()
+        self.assertEqual(len(merged_lines), 4)  # header + 3 rows
+
+        diff = compare_surveys(csv_a, csv_b, grid_size=0.01)
+        diff_data = json.loads(diff.read_text(encoding='utf-8'))
+        self.assertEqual(diff_data['type'], 'FeatureCollection')
+
+    def test_track_quality_score(self):
+        csv_file = self._write_full_sonar_csv()
+        quality = compute_track_quality(csv_file)
+        self.assertIn('overall_score', quality)
+        self.assertIn('grade', quality)
+        self.assertGreater(quality['total_frames'], 0)
+
+    def test_rsd_validation(self):
+        rsd_file = self.temp_path / 'test.rsd'
+        data = bytearray(1024)
+        data[4:8] = struct.pack('<i', int(40.7128 * 10_000_000))
+        data[8:12] = struct.pack('<i', int(-74.0060 * 10_000_000))
+        data[10:12] = struct.pack('<H', 50)  # depth 5.0m
+        data[32:34] = struct.pack('<H', 120)
+        rsd_file.write_bytes(data)
+
+        report = validate_rsd_file(rsd_file, stride=256)
+        self.assertIn('overall_score', report)
+        self.assertGreater(report['frames_attempted'], 0)
+
+    def test_geotiff_and_las_exports(self):
+        csv_file = self._write_full_sonar_csv()
+        tif_file = GeoTiffWriter.create_depth_geotiff(csv_file, grid_size=0.01)
+        las_file = LasExporter.create_las(csv_file)
+
+        self.assertTrue(tif_file.exists())
+        self.assertTrue(las_file.exists())
+        self.assertEqual(tif_file.read_bytes()[:2], b'II')
+        self.assertEqual(las_file.read_bytes()[:4], b'LASF')
 
 
 if __name__ == '__main__':

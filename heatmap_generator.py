@@ -73,6 +73,245 @@ class GridCell:
 
 class HeatmapGenerator:
     """Generate heatmaps from sonar CSV data"""
+
+    @staticmethod
+    def build_depth_grid(
+        csv_file: Path,
+        grid_size: float = 0.01,
+    ) -> Tuple[Dict[Tuple[int, int], float], Dict]:
+        """
+        Build a sparse depth grid keyed by (grid_x, grid_y) -> average depth (m).
+
+        Returns:
+            Tuple of (grid dict, metadata with min/max grid indices and depth range)
+        """
+        grid: Dict[Tuple[int, int], GridCell] = {}
+
+        with open(csv_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                parsed = HeatmapGenerator._read_csv_row(row)
+                if parsed is None:
+                    continue
+                lat, lon, intensity, depth, temp = parsed
+                if depth is None or depth <= 0:
+                    continue
+                key = grid_key(lon, lat, grid_size)
+                if key not in grid:
+                    cell_lat, cell_lon = grid_center(key, grid_size)
+                    grid[key] = GridCell(cell_lat, cell_lon)
+                grid[key].add_reading(intensity, depth, temp)
+
+        depth_grid: Dict[Tuple[int, int], float] = {}
+        depths: List[float] = []
+        for key, cell in grid.items():
+            stats = cell.get_stats()
+            if stats.get("depth_avg") is not None:
+                depth_grid[key] = stats["depth_avg"]
+                depths.append(stats["depth_avg"])
+
+        if not depth_grid:
+            return {}, {"grid_size": grid_size, "cell_count": 0}
+
+        gxs = [k[0] for k in depth_grid]
+        gys = [k[1] for k in depth_grid]
+        meta = {
+            "grid_size": grid_size,
+            "cell_count": len(depth_grid),
+            "min_gx": min(gxs),
+            "max_gx": max(gxs),
+            "min_gy": min(gys),
+            "max_gy": max(gys),
+            "depth_min_m": min(depths),
+            "depth_max_m": max(depths),
+        }
+        return depth_grid, meta
+
+    @staticmethod
+    def create_depth_contours(
+        csv_file: Path,
+        interval_m: float = 1.0,
+        grid_size: float = 0.01,
+        output_file: Optional[Path] = None,
+    ) -> Path:
+        """
+        Generate bathymetric contour lines as GeoJSON LineStrings.
+
+        Args:
+            csv_file: Input sonar CSV
+            interval_m: Contour interval in meters (default 1.0)
+            grid_size: Grid resolution in degrees
+            output_file: Output GeoJSON path
+        """
+        if output_file is None:
+            output_file = csv_file.with_name(f"{csv_file.stem}_depth_contours.geojson")
+        else:
+            output_file = Path(output_file)
+
+        depth_grid, meta = HeatmapGenerator.build_depth_grid(csv_file, grid_size)
+        if not depth_grid:
+            geojson = {
+                "type": "FeatureCollection",
+                "properties": {"contour_interval_m": interval_m},
+                "features": [],
+            }
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(geojson, f, indent=2)
+            return output_file
+
+        min_gx = meta["min_gx"]
+        max_gx = meta["max_gx"]
+        min_gy = meta["min_gy"]
+        max_gy = meta["max_gy"]
+        width = max_gx - min_gx + 1
+        height = max_gy - min_gy + 1
+
+        nodata = float("nan")
+        field: List[List[float]] = []
+        for gy in range(min_gy, max_gy + 1):
+            row: List[float] = []
+            for gx in range(min_gx, max_gx + 1):
+                val = depth_grid.get((gx, gy))
+                row.append(val if val is not None else nodata)
+            field.append(row)
+
+        depth_min = meta["depth_min_m"]
+        depth_max = meta["depth_max_m"]
+        levels = HeatmapGenerator._contour_levels(depth_min, depth_max, interval_m)
+
+        features = []
+        for level in levels:
+            segments = HeatmapGenerator._marching_squares(
+                field, level, min_gx, min_gy, grid_size,
+            )
+            for seg in segments:
+                features.append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": seg,
+                    },
+                    "properties": {
+                        "layer": "depth_contour",
+                        "depth_m": round(level, 2),
+                        "interval_m": interval_m,
+                    },
+                })
+
+        geojson = {
+            "type": "FeatureCollection",
+            "properties": {
+                "contour_interval_m": interval_m,
+                "grid_size_deg": grid_size,
+                "depth_min_m": round(depth_min, 2),
+                "depth_max_m": round(depth_max, 2),
+                "contour_count": len(levels),
+            },
+            "features": features,
+        }
+
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(geojson, f, indent=2)
+
+        logger.info(f"Generated depth contours: {output_file} ({len(features)} segments)")
+        return output_file
+
+    @staticmethod
+    def _contour_levels(min_depth: float, max_depth: float, interval: float) -> List[float]:
+        if interval <= 0:
+            interval = 1.0
+        start = math.ceil(min_depth / interval) * interval
+        levels = []
+        level = start
+        while level <= max_depth + interval * 0.001:
+            levels.append(round(level, 4))
+            level += interval
+        return levels
+
+    @staticmethod
+    def _marching_squares(
+        field: List[List[float]],
+        level: float,
+        min_gx: int,
+        min_gy: int,
+        grid_size: float,
+    ) -> List[List[List[float]]]:
+        """Extract contour line segments at a given level from a 2D scalar field."""
+        height = len(field)
+        width = len(field[0]) if height else 0
+        segments: List[List[List[float]]] = []
+
+        def val_at(col: int, row: int) -> float:
+            if 0 <= row < height and 0 <= col < width:
+                v = field[row][col]
+                if v != v:  # NaN
+                    return level
+                return v
+            return level
+
+        def to_lon_lat(gx: float, gy: float) -> List[float]:
+            lon = (min_gx + gx) * grid_size
+            lat = (min_gy + gy) * grid_size
+            return [lon, lat]
+
+        def interp(
+            x1: float, y1: float, v1: float,
+            x2: float, y2: float, v2: float,
+        ) -> List[float]:
+            if abs(v2 - v1) < 1e-9:
+                t = 0.5
+            else:
+                t = (level - v1) / (v2 - v1)
+            t = max(0.0, min(1.0, t))
+            return to_lon_lat(x1 + t * (x2 - x1), y1 + t * (y2 - y1))
+
+        for row in range(height - 1):
+            for col in range(width - 1):
+                v0 = val_at(col, row)
+                v1 = val_at(col + 1, row)
+                v2 = val_at(col + 1, row + 1)
+                v3 = val_at(col, row + 1)
+
+                case = 0
+                if v0 >= level:
+                    case |= 1
+                if v1 >= level:
+                    case |= 2
+                if v2 >= level:
+                    case |= 4
+                if v3 >= level:
+                    case |= 8
+
+                if case in (0, 15):
+                    continue
+
+                x, y = float(col), float(row)
+                top = interp(x, y, v0, x + 1, y, v1)
+                right = interp(x + 1, y, v1, x + 1, y + 1, v2)
+                bottom = interp(x, y + 1, v3, x + 1, y + 1, v2)
+                left = interp(x, y, v0, x, y + 1, v3)
+
+                edge_map: Dict[int, List[List[List[float]]]] = {
+                    1: [[left, bottom]],
+                    2: [[bottom, right]],
+                    3: [[left, right]],
+                    4: [[right, top]],
+                    5: [[left, top], [bottom, right]],
+                    6: [[bottom, top]],
+                    7: [[left, top]],
+                    8: [[top, left]],
+                    9: [[bottom, top]],
+                    10: [[top, right], [bottom, left]],
+                    11: [[right, top]],
+                    12: [[right, left]],
+                    13: [[bottom, left]],
+                    14: [[right, bottom]],
+                }
+
+                for seg in edge_map.get(case, []):
+                    segments.append(seg)
+
+        return segments
     
     @staticmethod
     def _get_color_hex(value: float, min_val: float, max_val: float) -> str:

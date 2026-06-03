@@ -12,6 +12,7 @@ from typing import Iterable, List, Optional, Sequence, Union
 
 from sonar_converter_streaming import convert_sonar_rsd_to_csv
 from analysis_tools import MapGenerator
+from export_tools import generate_map_exports
 from heatmap_generator import HeatmapGenerator
 from fish_detection import FishDetector
 from population_health import PopulationHealthAnalytics
@@ -133,9 +134,6 @@ def batch_convert(
         return summary
 
     out_root = Path(output_dir).expanduser() if output_dir else None
-    formats: List[str] = []
-    if map_formats:
-        formats = ['ply', 'geojson', 'kml', 'gpx'] if 'all' in map_formats else list(map_formats)
 
     for input_file in files:
         result = FileJobResult(input_path=input_file, success=False)
@@ -148,15 +146,8 @@ def batch_convert(
             result.frame_count = frame_count
             result.outputs.append(csv_file)
 
-            for fmt in formats:
-                if fmt == 'ply':
-                    result.outputs.append(MapGenerator.create_ply(csv_file))
-                elif fmt == 'geojson':
-                    result.outputs.append(MapGenerator.create_geojson(csv_file))
-                elif fmt == 'kml':
-                    result.outputs.append(MapGenerator.create_kml(csv_file))
-                elif fmt == 'gpx':
-                    result.outputs.append(MapGenerator.create_gpx(csv_file))
+            if map_formats:
+                result.outputs.extend(generate_map_exports(csv_file, map_formats))
 
             result.success = True
             result.message = f'Converted {frame_count:,} frames'
